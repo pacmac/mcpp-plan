@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+import os
+import sys
+
+# Force unbuffered output for reliable tool integration
+os.environ["PYTHONUNBUFFERED"] = "1"
+sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(line_buffering=True)
+
 from v2.cli import main
 
 if __name__ == "__main__":
