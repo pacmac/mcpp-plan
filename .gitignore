@@ -1,15 +1,39 @@
 # Runtime databases
-agent.db
-agent.db.bak*
 *.db
+*.db-shm
+*.db-wal
+agent.db*
+state.db*
+v2agent.db*
 
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.coverage
 
-# Agent runtime data
-agents/.downloads/
-agents/contexts/
+# IDE and editor
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
 
-# Scratch/offline
+# Scratch/offline/temp
 .off/
+*.tmp
+*.temp
+.tmp/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Config & state
+statemod.yaml
+.env
+.env.local
+*.log
