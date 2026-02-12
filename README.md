@@ -1,4 +1,4 @@
-# Agent: Task Manager
+# Plan: Task Manager
 
 A persistent task manager that tracks your work across sessions. Just tell the agent what you want in plain English -- it handles the rest.
 
@@ -6,39 +6,39 @@ A persistent task manager that tracks your work across sessions. Just tell the a
 
 ## Two Things to Know
 
-### 1. Topic
+### 1. Task
 
-A **topic** is what you're working on. Think of it as a project or focus area.
+A **task** is what you're working on. Think of it as a project or focus area.
 
 Examples:
 - "Build the login page"
 - "Fix broken search results"
 - "Add CSV export feature"
 
-A topic contains a list of tasks -- the steps to get it done.
+A task contains a list of steps -- the actions to get it done.
 
-### 2. Task
+### 2. Step
 
-A **task** is one step within a topic.
+A **step** is one action within a task.
 
-Example -- a "Build the login page" topic might have:
+Example -- a "Build the login page" task might have:
 1. Create user database table
 2. Build login form
 3. Add password validation
 4. Write tests
 
-Each task tracks its own status: planned, started, or complete.
+Each step tracks its own status: planned, started, or complete.
 
 ---
 
 ## One Thing at a Time
 
-The agent focuses on **one topic** and **one task** at a time. This is the core rule.
+The agent focuses on **one task** and **one step** at a time. This is the core rule.
 
 ```
 You are working on:
-  Topic: Build the login page
-  Task:  #2 "Build login form" [started]
+  Task: Build the login page
+  Step:  #2 "Build login form" [started]
 ```
 
 When you come back later, the agent remembers exactly where you left off.
@@ -49,57 +49,57 @@ When you come back later, the agent remembers exactly where you left off.
 
 You talk to the agent in plain language. Here are examples of what you can say:
 
-### Start a new topic
+### Start a new task
 
-> "Create a new topic called build-login with title Build Login Page.
-> The tasks are: create user database table, build login form,
+> "Create a new task called build-login with title Build Login Page.
+> The steps are: create user database table, build login form,
 > add password validation, write tests."
 
-The agent creates the topic, saves the tasks, and sets task #1 as current.
+The agent creates the task, saves the steps, and sets step #1 as current.
 
-### Work through tasks
+### Work through steps
 
-> "Show me task 1"
+> "Show me step 1"
 
-> "What are the notes on this task?"
+> "What are the notes on this step?"
 
-> "Mark task 1 as done"
+> "Mark step 1 as done"
 
-> "Switch to task 2"
+> "Switch to step 2"
 
 ### Add notes
 
-> "Add a note to task 3: Used bcrypt for password hashing"
+> "Add a note to step 3: Used bcrypt for password hashing"
 
 ### Check where you are
 
 > "What am I working on?"
 
-> "Show me all tasks"
+> "Show me all steps"
 
-### Switch between topics
+### Switch between tasks
 
-> "Show me all my topics"
+> "Show me all my tasks"
 
-> "Switch to the fix-search topic"
+> "Switch to the fix-search task"
 
-When you switch back later, the agent remembers which task you were on.
+When you switch back later, the agent remembers which step you were on.
 
 ---
 
-## Task Lifecycle
+## Step Lifecycle
 
-Every task moves through these states:
+Every step moves through these states:
 
 ```
 planned  -->  started  -->  complete
 ```
 
 - **planned** -- Created but not started yet
-- **started** -- The task you are currently working on
+- **started** -- The step you are currently working on
 - **complete** -- Done
 
-Only one task can be started at a time within a topic.
+Only one step can be started at a time within a task.
 
 ---
 
