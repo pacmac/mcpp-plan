@@ -21,7 +21,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 6
 
 
 def apply_schema_patches(conn: sqlite3.Connection, current_version: int) -> int:
@@ -120,6 +120,23 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # Backfill: assign orphan contexts (user_id IS NULL) to the current OS user.
+    orphan = conn.execute(
+        "SELECT COUNT(*) AS n FROM contexts WHERE user_id IS NULL"
+    ).fetchone()
+    if orphan and orphan["n"] > 0:
+        user_id = get_or_create_user(conn, get_os_user())
+        conn.execute(
+            "UPDATE contexts SET user_id = ? WHERE user_id IS NULL",
+            (user_id,),
+        )
+        # Migrate global_state -> user_state for this user.
+        gs = conn.execute(
+            "SELECT active_context_id FROM global_state WHERE id = 1"
+        ).fetchone()
+        if gs and gs["active_context_id"]:
+            upsert_user_state(conn, user_id, gs["active_context_id"])
+
 
 def upsert_global_state(conn: sqlite3.Connection, context_id: Optional[int]) -> None:
     conn.execute(
@@ -131,6 +148,74 @@ def upsert_global_state(conn: sqlite3.Connection, context_id: Optional[int]) -> 
 def get_active_context_id(conn: sqlite3.Connection) -> Optional[int]:
     row = conn.execute(
         "SELECT active_context_id FROM global_state WHERE id = 1"
+    ).fetchone()
+    if not row:
+        return None
+    return row["active_context_id"]
+
+
+# ── User helpers ──
+
+def get_os_user() -> str:
+    """Return the current OS login name."""
+    import os
+    return os.environ.get("USER") or os.environ.get("USERNAME") or "default"
+
+
+def get_or_create_user(conn: sqlite3.Connection, name: str) -> int:
+    """Return user id, creating the row if it doesn't exist."""
+    row = conn.execute("SELECT id FROM users WHERE name = ?", (name,)).fetchone()
+    if row:
+        return int(row["id"])
+    cur = conn.execute(
+        "INSERT INTO users (name, created_at) VALUES (?, ?)",
+        (name, utc_now_iso()),
+    )
+    return int(cur.lastrowid)
+
+
+def get_user(conn: sqlite3.Connection, user_id: int) -> Optional[dict]:
+    """Return user dict or None."""
+    row = conn.execute(
+        "SELECT id, name, display_name, created_at FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def set_user_display_name(conn: sqlite3.Connection, user_id: int, display_name: str) -> dict:
+    """Set display_name for a user. Returns updated user dict."""
+    conn.execute(
+        "UPDATE users SET display_name = ? WHERE id = ?",
+        (display_name, user_id),
+    )
+    return get_user(conn, user_id)
+
+
+def get_user_display(conn: sqlite3.Connection, user_id: int) -> str:
+    """Return display_name if set, otherwise name."""
+    row = conn.execute(
+        "SELECT name, display_name FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if not row:
+        return "unknown"
+    return row["display_name"] or row["name"]
+
+
+def upsert_user_state(conn: sqlite3.Connection, user_id: int, context_id: Optional[int]) -> None:
+    """Set the active context for a user."""
+    conn.execute(
+        "INSERT OR REPLACE INTO user_state (user_id, active_context_id, updated_at) VALUES (?, ?, ?)",
+        (user_id, context_id, utc_now_iso()),
+    )
+
+
+def get_active_context_id_for_user(conn: sqlite3.Connection, user_id: int) -> Optional[int]:
+    """Get the active context for a specific user."""
+    row = conn.execute(
+        "SELECT active_context_id FROM user_state WHERE user_id = ?",
+        (user_id,),
     ).fetchone()
     if not row:
         return None

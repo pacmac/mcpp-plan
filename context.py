@@ -56,8 +56,11 @@ def resolve_context_id(conn, context_ref: str | int) -> int:
     return int(row["id"])
 
 
-def resolve_active_context_id(conn) -> int:
-    context_id = db.get_active_context_id(conn)
+def resolve_active_context_id(conn, user_id: int | None = None) -> int:
+    if user_id is not None:
+        context_id = db.get_active_context_id_for_user(conn, user_id)
+    else:
+        context_id = db.get_active_context_id(conn)
     if context_id is None:
         raise ValueError("No active context is set.")
     return int(context_id)
@@ -264,6 +267,7 @@ def create_context(
     start_task_index: Optional[int] = None,
     auto_complete_first_task: bool = False,
     actor: Optional[str] = None,
+    user_id: Optional[int] = None,
 ) -> int:
     """Create a new context and optional initial tasks.
 
@@ -275,9 +279,9 @@ def create_context(
     conn.execute("BEGIN")
     try:
         cur = conn.execute(
-            "INSERT INTO contexts (name, status, description_md, created_at, updated_at) "
-            "VALUES (?, 'active', ?, ?, ?)",
-            (name, description_md, now, now),
+            "INSERT INTO contexts (name, status, description_md, user_id, created_at, updated_at) "
+            "VALUES (?, 'active', ?, ?, ?, ?)",
+            (name, description_md, user_id, now, now),
         )
         context_id = int(cur.lastrowid)
 
@@ -349,6 +353,8 @@ def create_context(
             _set_next_step_for_new_task(conn, context_id, now)
 
         if set_active:
+            if user_id is not None:
+                db.upsert_user_state(conn, user_id, context_id)
             db.upsert_global_state(conn, context_id)
 
         conn.execute(
@@ -368,12 +374,15 @@ def switch_context(
     conn,
     context_ref: str | int,
     actor: Optional[str] = None,
+    user_id: Optional[int] = None,
 ) -> int:
     """Set the active context."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         context_id = resolve_context_id(conn, context_ref)
+        if user_id is not None:
+            db.upsert_user_state(conn, user_id, context_id)
         db.upsert_global_state(conn, context_id)
         # Ensure the target context has an active task.
         state_row = conn.execute(
@@ -928,28 +937,55 @@ def get_plan_status(conn, context_ref: str | int | None = None) -> dict:
     }
 
 
-def list_contexts(conn) -> list[dict]:
-    active_id = db.get_active_context_id(conn)
-    rows = conn.execute(
-        "SELECT c.id, c.name, c.status, c.description_md, t.task_number, t.title "
-        "FROM contexts c "
-        "LEFT JOIN context_state s ON s.context_id = c.id "
-        "LEFT JOIN tasks t ON t.id = s.active_task_id "
-        "ORDER BY c.id"
-    ).fetchall()
+def list_contexts(conn, user_id: int | None = None, show_all_users: bool = False) -> list[dict]:
+    active_id = None
+    if user_id is not None:
+        active_id = db.get_active_context_id_for_user(conn, user_id)
+    if active_id is None:
+        active_id = db.get_active_context_id(conn)
+
+    if user_id is not None and not show_all_users:
+        rows = conn.execute(
+            "SELECT c.id, c.name, c.status, c.description_md, c.user_id, "
+            "t.task_number, t.title "
+            "FROM contexts c "
+            "LEFT JOIN context_state s ON s.context_id = c.id "
+            "LEFT JOIN tasks t ON t.id = s.active_task_id "
+            "WHERE c.user_id = ? "
+            "ORDER BY c.id",
+            (user_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT c.id, c.name, c.status, c.description_md, c.user_id, "
+            "t.task_number, t.title "
+            "FROM contexts c "
+            "LEFT JOIN context_state s ON s.context_id = c.id "
+            "LEFT JOIN tasks t ON t.id = s.active_task_id "
+            "ORDER BY c.id"
+        ).fetchall()
+
+    # Build user display name lookup for show_all_users
+    user_names: dict[int, str] = {}
+    if show_all_users:
+        for u in conn.execute("SELECT id, name, display_name FROM users").fetchall():
+            user_names[u["id"]] = u["display_name"] or u["name"]
+
     contexts = []
     for row in rows:
-        contexts.append(
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "status": row["status"],
-                "title": row["description_md"] or row["name"],
-                "is_active": row["id"] == active_id,
-                "active_task_number": row["task_number"],
-                "active_task_title": row["title"],
-            }
-        )
+        entry = {
+            "id": row["id"],
+            "name": row["name"],
+            "status": row["status"],
+            "title": row["description_md"] or row["name"],
+            "is_active": row["id"] == active_id,
+            "active_task_number": row["task_number"],
+            "active_task_title": row["title"],
+        }
+        if show_all_users:
+            uid = row["user_id"]
+            entry["user"] = user_names.get(uid, "unknown") if uid else "unknown"
+        contexts.append(entry)
     return contexts
 
 
@@ -1130,19 +1166,19 @@ resolve_active_task_id = resolve_active_context_id
 switch_task = switch_context
 
 
-def list_tasks(conn, status_filter=None):
-    """List tasks (was list_contexts), with optional status filter."""
-    contexts = list_contexts(conn)
+def list_tasks(conn, status_filter=None, user_id=None, show_all_users=False):
+    """List tasks (was list_contexts), with optional status and user filter."""
+    contexts = list_contexts(conn, user_id=user_id, show_all_users=show_all_users)
     if status_filter:
         contexts = [c for c in contexts if c.get("status", "active") == status_filter]
     return contexts
 
 
-def create_task(conn, name, description_md=None, steps=None, set_active=False, **kw):
+def create_task(conn, name, description_md=None, steps=None, set_active=False, user_id=None, **kw):
     """Create a task (was context). Maps steps→tasks for create_context."""
     return create_context(
         conn, name=name, description_md=description_md,
-        tasks=steps, set_active=set_active, **kw
+        tasks=steps, set_active=set_active, user_id=user_id, **kw
     )
 
 

@@ -109,6 +109,40 @@ Only one step can be started at a time within a task.
 
 ---
 
+## Users
+
+Each task belongs to a **user**, determined automatically from the OS login (`$USER`). This means multiple people can share the same project database with independent state.
+
+- Tasks are scoped to the current user by default
+- Each user has their own active task cursor
+- `plan task list` shows only your tasks
+- `plan task list --all` shows all users' tasks, grouped by user
+
+Users are created automatically on first use -- no setup needed.
+
+### Display name
+
+By default you show up as your OS login (e.g. `root`). Set an alias to change how you appear:
+
+> "Set my display name to PAC"
+
+> "Show my user info"
+
+---
+
+## Hierarchy
+
+The full data model is:
+
+```
+project
+  └── user (auto-detected from OS)
+        └── task (your focus area)
+              └── step (individual actions)
+```
+
+---
+
 ## Project Identity
 
 Each workspace has a **project** record -- a name, path, and description. This is set once and included in every response so the agent always knows what project it's working in.
