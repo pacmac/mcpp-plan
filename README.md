@@ -69,7 +69,13 @@ The agent creates the task, saves the steps, and sets step #1 as current.
 
 ### Add notes
 
+Notes can go on tasks or steps.
+
+> "Add a note to this task: Decided to use OAuth2 instead of custom auth"
+
 > "Add a note to step 3: Used bcrypt for password hashing"
+
+> "Show me the notes on this task"
 
 ### Check where you are
 
@@ -100,6 +106,18 @@ planned  -->  started  -->  complete
 - **complete** -- Done
 
 Only one step can be started at a time within a task.
+
+---
+
+## Project Identity
+
+Each workspace has a **project** record -- a name, path, and description. This is set once and included in every response so the agent always knows what project it's working in.
+
+On first use, the project name defaults to the directory name. The agent will be prompted to provide a proper name and description via `plan_project_set`.
+
+> "Set the project name to my-app and description to E-commerce platform backend"
+
+> "Show the project info"
 
 ---
 
