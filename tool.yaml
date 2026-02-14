@@ -1,0 +1,213 @@
+name: plan
+scope: local
+about: "Manage project tasks and steps with persistent state. Use to track work across sessions."
+
+tools:
+  # ── Task tools (top-level grouping) ──
+  - name: plan_task_new
+    description: "Create a new task with initial steps"
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Task name (e.g. 'implement-auth')"
+        title:
+          type: string
+          description: "Human-readable task title"
+        steps:
+          type: array
+          items:
+            type: string
+          description: "List of step titles to create"
+      required:
+        - name
+
+  - name: plan_task_list
+    description: "List all tasks in the workspace database"
+    inputSchema:
+      type: object
+      properties:
+        show_archived:
+          type: boolean
+          description: "Include archived tasks (default: false, only active shown)"
+        show_all:
+          type: boolean
+          description: "Show tasks from all users (default: false, only current user's tasks)"
+
+  - name: plan_task_archive
+    description: "Archive a task (must not be the active task)"
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Task name to archive"
+      required:
+        - name
+
+  - name: plan_task_switch
+    description: "Switch to a different task"
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Task name to switch to"
+      required:
+        - name
+
+  - name: plan_task_show
+    description: "Show detailed information about a task"
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Task name (omit for active task)"
+
+  - name: plan_task_status
+    description: "Show the active task and current step"
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_task_notes
+    description: "Add or view notes on a task"
+    inputSchema:
+      type: object
+      properties:
+        text:
+          type: string
+          description: "Note text to add (omit to read)"
+        name:
+          type: string
+          description: "Task name (omit for active task)"
+
+  # ── Step tools (individual items) ──
+  - name: plan_step_switch
+    description: "Switch to a specific step within active task"
+    inputSchema:
+      type: object
+      properties:
+        number:
+          type: integer
+          description: "Step number (1-indexed within task)"
+      required:
+        - number
+
+  - name: plan_step_show
+    description: "Show detailed information about a step"
+    inputSchema:
+      type: object
+      properties:
+        number:
+          type: integer
+          description: "Step number (omit for active step)"
+
+  - name: plan_step_list
+    description: "List all steps in the active task"
+    inputSchema:
+      type: object
+      properties:
+        task:
+          type: string
+          description: "Task name (omit for active)"
+
+  - name: plan_step_done
+    description: "Mark a step as complete"
+    inputSchema:
+      type: object
+      properties:
+        number:
+          type: integer
+          description: "Step number to complete"
+      required:
+        - number
+
+  - name: plan_step_notes
+    description: "Add or view notes on a step"
+    inputSchema:
+      type: object
+      properties:
+        text:
+          type: string
+          description: "Note text to add (omit to read)"
+        number:
+          type: integer
+          description: "Step number (omit for active step)"
+
+  - name: plan_step_new
+    description: "Create a new step in a task"
+    inputSchema:
+      type: object
+      properties:
+        title:
+          type: string
+          description: "Step title"
+        task:
+          type: string
+          description: "Task name (omit for active task)"
+        description:
+          type: string
+          description: "Step description (markdown)"
+      required:
+        - title
+
+  - name: plan_step_delete
+    description: "Soft-delete a step"
+    inputSchema:
+      type: object
+      properties:
+        number:
+          type: integer
+          description: "Step number to delete"
+        task:
+          type: string
+          description: "Task name (omit for active task)"
+      required:
+        - number
+
+  # ── User tools ──
+  - name: plan_user_show
+    description: "Show the current user (OS login and display name/alias)"
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_user_set
+    description: "Set your display name (alias). This is how you appear in task lists."
+    inputSchema:
+      type: object
+      properties:
+        alias:
+          type: string
+          description: "Display name / alias (e.g. 'PAC')"
+      required:
+        - alias
+
+  # ── Project tools (workspace metadata) ──
+  - name: plan_project_show
+    description: "Show project metadata (name, path, description)"
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_project_set
+    description: "Set project metadata (name and/or description). Call this when prompted to identify the project."
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Project name"
+        description:
+          type: string
+          description: "Project description (markdown)"
+
+  # ── Utility ──
+  - name: plan_readme
+    description: "Fetch the plan README and display it IN FULL to the user. The result text must be printed completely in your response -- do not summarize, truncate, or paraphrase. The user is reading it to learn how the system works."
+    inputSchema:
+      type: object
+      properties: {}

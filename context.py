@@ -146,13 +146,14 @@ def create_task(
     sort_index: Optional[int] = None,
     sub_index: Optional[int] = None,
     actor: Optional[str] = None,
+    user_id: Optional[int] = None,
 ) -> tuple[int, int]:
     """Create a new task for a context."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         context_id = (
-            resolve_active_context_id(conn)
+            resolve_active_context_id(conn, user_id=user_id)
             if context_ref is None
             else resolve_context_id(conn, context_ref)
         )
@@ -452,13 +453,14 @@ def switch_task(
     task_number: int,
     context_ref: str | int | None = None,
     actor: Optional[str] = None,
+    user_id: Optional[int] = None,
 ) -> int:
     """Switch the active task in a context by task number."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         context_id = (
-            resolve_active_context_id(conn)
+            resolve_active_context_id(conn, user_id=user_id)
             if context_ref is None
             else resolve_context_id(conn, context_ref)
         )
@@ -518,9 +520,10 @@ def list_task_notes(
     conn,
     task_number: int | None = None,
     context_ref: str | int | None = None,
+    user_id: int | None = None,
 ) -> list[dict]:
     if context_ref is None:
-        context_id = resolve_active_context_id(conn)
+        context_id = resolve_active_context_id(conn, user_id=user_id)
     else:
         context_id = resolve_context_id(conn, context_ref)
 
@@ -548,12 +551,13 @@ def add_task_note(
     task_number: int | None = None,
     context_ref: str | int | None = None,
     actor: str | None = None,
+    user_id: int | None = None,
 ) -> int:
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         if context_ref is None:
-            context_id = resolve_active_context_id(conn)
+            context_id = resolve_active_context_id(conn, user_id=user_id)
         else:
             context_id = resolve_context_id(conn, context_ref)
 
@@ -590,9 +594,10 @@ def add_task_note(
 def list_context_notes(
     conn,
     context_ref: str | int | None = None,
+    user_id: int | None = None,
 ) -> list[dict]:
     if context_ref is None:
-        context_id = resolve_active_context_id(conn)
+        context_id = resolve_active_context_id(conn, user_id=user_id)
     else:
         context_id = resolve_context_id(conn, context_ref)
 
@@ -608,12 +613,13 @@ def add_context_note(
     note_md: str,
     context_ref: str | int | None = None,
     actor: str | None = None,
+    user_id: int | None = None,
 ) -> int:
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         if context_ref is None:
-            context_id = resolve_active_context_id(conn)
+            context_id = resolve_active_context_id(conn, user_id=user_id)
         else:
             context_id = resolve_context_id(conn, context_ref)
 
@@ -695,13 +701,14 @@ def delete_task(
     task_number: int,
     context_ref: str | int | None = None,
     actor: str | None = None,
+    user_id: int | None = None,
 ) -> int:
     """Soft-delete a task by setting is_deleted = 1."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         context_id = (
-            resolve_active_context_id(conn)
+            resolve_active_context_id(conn, user_id=user_id)
             if context_ref is None
             else resolve_context_id(conn, context_ref)
         )
@@ -775,13 +782,14 @@ def complete_task(
     task_number: int,
     context_ref: str | int | None = None,
     actor: str | None = None,
+    user_id: int | None = None,
 ) -> int:
     """Mark a task as complete (context-scoped task number)."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         context_id = (
-            resolve_active_context_id(conn)
+            resolve_active_context_id(conn, user_id=user_id)
             if context_ref is None
             else resolve_context_id(conn, context_ref)
         )
@@ -824,9 +832,10 @@ def get_task_summary(
     conn,
     task_number: int,
     context_ref: str | int | None = None,
+    user_id: int | None = None,
 ) -> dict:
     if context_ref is None:
-        context_id = resolve_active_context_id(conn)
+        context_id = resolve_active_context_id(conn, user_id=user_id)
     else:
         context_id = resolve_context_id(conn, context_ref)
 
@@ -841,9 +850,9 @@ def get_task_summary(
     return dict(row)
 
 
-def get_plan_show(conn, context_ref: str | int | None = None) -> dict:
+def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | None = None) -> dict:
     context_id = (
-        resolve_active_context_id(conn)
+        resolve_active_context_id(conn, user_id=user_id)
         if context_ref is None
         else resolve_context_id(conn, context_ref)
     )
@@ -885,9 +894,9 @@ def get_plan_show(conn, context_ref: str | int | None = None) -> dict:
     }
 
 
-def get_plan_status(conn, context_ref: str | int | None = None) -> dict:
+def get_plan_status(conn, context_ref: str | int | None = None, user_id: int | None = None) -> dict:
     context_id = (
-        resolve_active_context_id(conn)
+        resolve_active_context_id(conn, user_id=user_id)
         if context_ref is None
         else resolve_context_id(conn, context_ref)
     )
@@ -965,16 +974,17 @@ def list_contexts(conn, user_id: int | None = None, show_all_users: bool = False
             "ORDER BY c.id"
         ).fetchall()
 
-    # Build user display name lookup for show_all_users
+    # Build user display name lookup
     user_names: dict[int, str] = {}
-    if show_all_users:
-        for u in conn.execute("SELECT id, name, display_name FROM users").fetchall():
-            user_names[u["id"]] = u["display_name"] or u["name"]
+    for u in conn.execute("SELECT id, name, display_name FROM users").fetchall():
+        user_names[u["id"]] = u["display_name"] or u["name"]
 
     contexts = []
     for row in rows:
+        uid = row["user_id"]
         entry = {
             "id": row["id"],
+            "user": user_names.get(uid, "unknown") if uid else "unknown",
             "name": row["name"],
             "status": row["status"],
             "title": row["description_md"] or row["name"],
@@ -982,16 +992,13 @@ def list_contexts(conn, user_id: int | None = None, show_all_users: bool = False
             "active_task_number": row["task_number"],
             "active_task_title": row["title"],
         }
-        if show_all_users:
-            uid = row["user_id"]
-            entry["user"] = user_names.get(uid, "unknown") if uid else "unknown"
         contexts.append(entry)
     return contexts
 
 
-def list_tasks(conn, context_ref: str | int | None = None) -> dict:
+def list_tasks(conn, context_ref: str | int | None = None, user_id: int | None = None) -> dict:
     context_id = (
-        resolve_active_context_id(conn)
+        resolve_active_context_id(conn, user_id=user_id)
         if context_ref is None
         else resolve_context_id(conn, context_ref)
     )
@@ -1060,9 +1067,10 @@ def get_task_logs(
     conn,
     task_number: int,
     context_ref: str | int | None = None,
+    user_id: int | None = None,
 ) -> dict:
     if context_ref is None:
-        context_id = resolve_active_context_id(conn)
+        context_id = resolve_active_context_id(conn, user_id=user_id)
     else:
         context_id = resolve_context_id(conn, context_ref)
 
@@ -1182,10 +1190,13 @@ def create_task(conn, name, description_md=None, steps=None, set_active=False, u
     )
 
 
-def archive_context(conn, name: str) -> None:
+def archive_context(conn, name: str, user_id: int | None = None) -> None:
     """Archive a context by name. Refuses to archive the active context."""
     context_id = resolve_context_id(conn, name)
-    active_id = db.get_active_context_id(conn)
+    if user_id is not None:
+        active_id = db.get_active_context_id_for_user(conn, user_id)
+    else:
+        active_id = db.get_active_context_id(conn)
     if context_id == active_id:
         raise ValueError(
             f"Cannot archive the active context '{name}'. Switch to another context first."
@@ -1209,24 +1220,24 @@ switch_step = _orig_switch_task
 complete_step = complete_task
 
 
-def get_step_summary(conn, step_number=None, **kw):
+def get_step_summary(conn, step_number=None, user_id=None, **kw):
     """Adapter: step_number → task_number."""
-    return get_task_summary(conn, task_number=step_number, **kw)
+    return get_task_summary(conn, task_number=step_number, user_id=user_id, **kw)
 
 
-def delete_step(conn, step_number, task_ref=None):
+def delete_step(conn, step_number, task_ref=None, user_id=None):
     """Adapter: task_ref → context_ref."""
-    return delete_task(conn, step_number, context_ref=task_ref)
+    return delete_task(conn, step_number, context_ref=task_ref, user_id=user_id)
 
 
-def add_step_note(conn, note_md, step_number=None):
+def add_step_note(conn, note_md, step_number=None, user_id=None):
     """Adapter: step_number → task_number."""
-    return add_task_note(conn, note_md, task_number=step_number)
+    return add_task_note(conn, note_md, task_number=step_number, user_id=user_id)
 
 
-def list_step_notes(conn, step_number=None):
+def list_step_notes(conn, step_number=None, user_id=None):
     """Adapter: step_number → task_number."""
-    return list_task_notes(conn, task_number=step_number)
+    return list_task_notes(conn, task_number=step_number, user_id=user_id)
 
 
 create_step = _orig_create_task  # already returns (step_id, step_number)
