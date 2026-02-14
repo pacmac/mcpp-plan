@@ -20,7 +20,7 @@ project
 - **Tasks** are top-level work items (features, bugs, refactors)
 - **Steps** are ordered actions within a task
 - **One task and one step are active at a time** -- the agent always knows what to do next
-- **State persists** in `~/.config/plan/plan.db` across all projects
+- **State persists** in `plan.db` within the module directory
 - **Multi-user** -- each OS user gets independent task cursors within a shared database
 
 ## Installation
@@ -43,7 +43,7 @@ git clone <repo-url> /path/to/mcpp-plan
 
 2. Register it with mcpp by adding the tool path to your configuration. The `tool.yaml` in this directory declares all available MCP tools.
 
-3. The database is created automatically at `~/.config/plan/plan.db` on first use. No setup required.
+3. The database is created automatically as `plan.db` in the module directory on first use. No setup required.
 
 ## Tools
 
@@ -125,7 +125,7 @@ Only one step can be `started` at a time within a task. When you switch steps, t
 
 ## Database
 
-All state lives in a single SQLite database at `~/.config/plan/plan.db`, shared across all projects. Each project is identified by its absolute filesystem path.
+All state lives in a single SQLite database at `plan.db` in the module directory, shared across all projects. Each project is identified by its absolute filesystem path.
 
 ### Schema
 

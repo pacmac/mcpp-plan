@@ -142,7 +142,6 @@ def get_info(context: dict[str, Any] | None = None) -> dict[str, Any]:
             "number": {"values": None, "default": None}
         },
         "existing_tasks": existing_tasks,
-        "database_file": "~/.config/plan/plan.db (central, shared across projects)",
         "tip": "Ask 'what am I working on?' to see current state"
     }
 
