@@ -27,10 +27,8 @@ LATEST_SCHEMA_VERSION = 8
 # ── Central DB path ──
 
 def default_db_path() -> Path:
-    """Return the central DB path (~/.config/plan/plan.db)."""
-    config_dir = Path.home() / ".config" / "plan"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return config_dir / "plan.db"
+    """Return the central DB path (plan.db in this module's directory)."""
+    return Path(__file__).resolve().parent / "plan.db"
 
 
 def apply_schema_patches(conn: sqlite3.Connection, current_version: int) -> int:
