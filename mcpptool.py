@@ -76,8 +76,8 @@ def _fmt_task_list(tasks: list[dict], grouped: bool = False) -> str:
             tid = t.get("id", "?")
             active = " (active)" if t.get("is_active") else ""
             status = t.get("status", "active")
-            if status == "archived":
-                active = " [archived]"
+            if status == "completed":
+                active = " [completed]"
             lines.append(f"- [{tid}] {t['name']}: {t.get('title', t['name'])}{active}")
         return "\n".join(lines)
 
@@ -95,8 +95,8 @@ def _fmt_task_list(tasks: list[dict], grouped: bool = False) -> str:
             tid = t.get("id", "?")
             active = " (active)" if t.get("is_active") else ""
             status = t.get("status", "active")
-            if status == "archived":
-                active = " [archived]"
+            if status == "completed":
+                active = " [completed]"
             lines.append(f"- [{tid}] {t['name']}: {t.get('title', t['name'])}{active}")
     return "\n".join(lines)
 
@@ -297,15 +297,15 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                 else:
                     conn, _project, _is_new, _user_id, _project_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
 
-                    if action == "archive":
+                    if action == "complete":
                         name = cmd_args[2] if len(cmd_args) > 2 else None
                         if not name:
                             conn.close()
                             return {"success": False, "error": "task name required"}
-                        plan_ctx.archive_task(conn, name, user_id=_user_id, project_id=_project_id)
+                        plan_ctx.complete_task_context(conn, name, user_id=_user_id, project_id=_project_id)
                         tasks = plan_ctx.list_tasks(conn, status_filter="active", user_id=_user_id, project_id=_project_id)
                         conn.close()
-                        return {"success": True, "result": {"archived": name, "tasks": tasks}}
+                        return {"success": True, "result": {"completed": name, "tasks": tasks}}
 
                     elif action == "switch":
                         name = cmd_args[2] if len(cmd_args) > 2 else None
@@ -514,7 +514,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         # Task tools (top-level grouping)
         "plan_task_new": _cmd_task_new,
         "plan_task_list": _cmd_task_list,
-        "plan_task_archive": _cmd_task_archive,
+        "plan_task_complete": _cmd_task_complete,
         "plan_task_switch": _cmd_task_switch,
         "plan_task_show": _cmd_task_show,
         "plan_task_status": _cmd_task_status,
@@ -608,7 +608,7 @@ def _cmd_task_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
 def _cmd_task_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """plan list tasks [--status <filter>] [--all] --json"""
     cmd = ["task", "list"]
-    if not args.get("show_archived"):
+    if not args.get("show_completed"):
         cmd.extend(["--status", "active"])
     if args.get("show_all"):
         cmd.append("--all")
@@ -619,13 +619,13 @@ def _cmd_task_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     return _with_display(r, _fmt_task_list(tasks, grouped=show_all))
 
 
-def _cmd_task_archive(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
-    """plan task archive <name>"""
+def _cmd_task_complete(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """plan task complete <name>"""
     name = args.get("name")
     if not name:
         return {"success": False, "error": "name is required"}
-    r = _run_plan_cmd(workspace_dir, ["task", "archive", name])
-    return _with_display(r, f"Archived task **{name}**.")
+    r = _run_plan_cmd(workspace_dir, ["task", "complete", name])
+    return _with_display(r, f"Completed task **{name}**.")
 
 
 def _cmd_task_switch(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:

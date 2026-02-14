@@ -28,21 +28,21 @@ tools:
     inputSchema:
       type: object
       properties:
-        show_archived:
+        show_completed:
           type: boolean
-          description: "Include archived tasks (default: false, only active shown)"
+          description: "Include completed tasks (default: false, only active shown)"
         show_all:
           type: boolean
           description: "Show tasks from all users (default: false, only current user's tasks)"
 
-  - name: plan_task_archive
-    description: "Archive a task (must not be the active task)"
+  - name: plan_task_complete
+    description: "Mark a task as completed (must not be the active task)"
     inputSchema:
       type: object
       properties:
         name:
           type: string
-          description: "Task name to archive"
+          description: "Task name to complete"
       required:
         - name
 

@@ -13,6 +13,7 @@ _MODULE_DIR = Path(__file__).resolve().parent
 DEFAULTS: dict[str, Any] = {
     "workflow": {
         "require_goal_and_plan": True,
+        "allow_reopen_completed": False,
     },
 }
 

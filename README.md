@@ -62,7 +62,7 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_task_show` | Show a task and its steps |
 | `plan_task_status` | Show active task and progress |
 | `plan_task_switch` | Switch to a different task |
-| `plan_task_archive` | Archive a completed task |
+| `plan_task_complete` | Mark a task as completed |
 | `plan_task_notes` | Add or read notes on a task (supports `kind`: goal, plan, note) |
 
 ### Step tools
@@ -198,7 +198,8 @@ Global settings live in `config.yaml` in the module directory (alongside `plan.d
 
 ```yaml
 workflow:
-  require_goal_and_plan: true   # require goal and plan notes before step progress
+  require_goal_and_plan: true      # require goal and plan notes before step progress
+  allow_reopen_completed: false    # allow switching to completed tasks (reopens them)
 ```
 
 ### Defaults
@@ -206,6 +207,7 @@ workflow:
 | Section | Key | Default | Description |
 |---------|-----|---------|-------------|
 | `workflow` | `require_goal_and_plan` | `true` | Require goal and plan notes before step progress |
+| `workflow` | `allow_reopen_completed` | `false` | Allow switching to completed tasks (sets them back to active) |
 
 ### Behavior
 

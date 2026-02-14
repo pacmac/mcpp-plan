@@ -392,6 +392,24 @@ def switch_context(
     conn.execute("BEGIN")
     try:
         context_id = resolve_context_id(conn, context_ref, project_id=project_id)
+
+        # Check if target is completed — gate on config
+        ctx_status_row = conn.execute(
+            "SELECT status FROM contexts WHERE id = ?", (context_id,),
+        ).fetchone()
+        if ctx_status_row and ctx_status_row["status"] == "completed":
+            from . import config
+            cfg = config.get_config()
+            if not cfg.get("workflow", {}).get("allow_reopen_completed", False):
+                raise ValueError(
+                    f"Cannot switch to completed task. "
+                    f"Set workflow.allow_reopen_completed to true in config to allow this."
+                )
+            conn.execute(
+                "UPDATE contexts SET status = 'active', updated_at = ? WHERE id = ?",
+                (now, context_id),
+            )
+
         if user_id is not None and project_id is not None:
             db.upsert_user_state(conn, user_id, project_id, context_id)
         db.upsert_global_state(conn, context_id)
@@ -1314,8 +1332,8 @@ def create_task(conn, name, description_md=None, steps=None, set_active=False, u
     )
 
 
-def archive_context(conn, name: str, user_id: int | None = None, project_id: int | None = None) -> None:
-    """Archive a context by name. Refuses to archive the active context."""
+def complete_context(conn, name: str, user_id: int | None = None, project_id: int | None = None) -> None:
+    """Mark a context as completed. Refuses to complete the active context."""
     context_id = resolve_context_id(conn, name, project_id=project_id)
     if user_id is not None:
         active_id = db.get_active_context_id_for_user(conn, user_id, project_id=project_id)
@@ -1323,16 +1341,16 @@ def archive_context(conn, name: str, user_id: int | None = None, project_id: int
         active_id = db.get_active_context_id(conn)
     if context_id == active_id:
         raise ValueError(
-            f"Cannot archive the active context '{name}'. Switch to another context first."
+            f"Cannot complete the active context '{name}'. Switch to another context first."
         )
     now = db.utc_now_iso()
     conn.execute(
-        "UPDATE contexts SET status = 'archived', updated_at = ? WHERE id = ?",
+        "UPDATE contexts SET status = 'completed', updated_at = ? WHERE id = ?",
         (now, context_id),
     )
 
 
-archive_task = archive_context
+complete_task_context = complete_context
 add_task_notes = add_context_note
 list_task_notes_on_task = list_context_notes
 
