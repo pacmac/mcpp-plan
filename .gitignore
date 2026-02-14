@@ -1,3 +1,6 @@
+# Backups
+.backups/
+
 # Runtime databases
 *.db
 *.db-shm
@@ -41,3 +44,4 @@ statemod.yaml
 .env
 .env.local
 *.log
+
