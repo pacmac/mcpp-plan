@@ -1,0 +1,2 @@
+workflow:
+  require_goal_and_plan: true

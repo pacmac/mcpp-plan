@@ -31,7 +31,9 @@ def _fmt_notes(notes: list[dict], label: str = "Notes") -> str:
     lines = [f"**{label}** ({len(notes)})"]
     for n in notes:
         actor = f" — {n['actor']}" if n.get("actor") else ""
-        lines.append(f"- {n['note']}{actor}")
+        kind = n.get("kind", "note")
+        kind_tag = f"[{kind}] " if kind != "note" else ""
+        lines.append(f"- {kind_tag}{n['note']}{actor}")
     return "\n".join(lines)
 
 
@@ -40,6 +42,10 @@ def _fmt_task_show(data: dict) -> str:
     title = data.get("context_title", name)
     active_num = data.get("active_task_number")
     lines = [f"**{name}**: {title}"]
+    if goal := data.get("goal"):
+        lines.append(f"  **Goal**: {goal}")
+    if plan := data.get("plan"):
+        lines.append(f"  **Plan**: {plan}")
     for t in data.get("tasks", []):
         num = t["task_number"]
         deleted = t.get("is_deleted")
@@ -169,6 +175,12 @@ def _load_pkg(pkg_path: Path):
     sys.modules["mcpp_plan.db"] = plan_db_mod
     if db_spec.loader:
         db_spec.loader.exec_module(plan_db_mod)
+
+    config_spec = importlib.util.spec_from_file_location("mcpp_plan.config", pkg_path / "config.py")
+    config_mod = importlib.util.module_from_spec(config_spec)
+    sys.modules["mcpp_plan.config"] = config_mod
+    if config_spec.loader:
+        config_spec.loader.exec_module(config_mod)
 
     context_spec = importlib.util.spec_from_file_location("mcpp_plan.context", pkg_path / "context.py")
     plan_ctx = importlib.util.module_from_spec(context_spec)
@@ -323,10 +335,14 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                     elif action == "notes":
                         name = None
                         text = None
+                        kind = None
                         i = 2
                         while i < len(cmd_args):
                             if cmd_args[i] == "--name" and i + 1 < len(cmd_args):
                                 name = cmd_args[i + 1]
+                                i += 2
+                            elif cmd_args[i] == "--kind" and i + 1 < len(cmd_args):
+                                kind = cmd_args[i + 1]
                                 i += 2
                             elif not cmd_args[i].startswith("--"):
                                 text = cmd_args[i]
@@ -335,12 +351,12 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                                 i += 1
 
                         if text:
-                            plan_ctx.add_context_note(conn, text, context_ref=name, user_id=_user_id, project_id=_project_id)
+                            plan_ctx.add_context_note(conn, text, context_ref=name, user_id=_user_id, project_id=_project_id, kind=kind or "note")
                             notes = plan_ctx.list_context_notes(conn, context_ref=name, user_id=_user_id, project_id=_project_id)
                             conn.close()
                             return {"success": True, "result": {"notes": notes}}
                         else:
-                            notes = plan_ctx.list_context_notes(conn, context_ref=name, user_id=_user_id, project_id=_project_id)
+                            notes = plan_ctx.list_context_notes(conn, context_ref=name, user_id=_user_id, project_id=_project_id, kind=kind)
                             conn.close()
                             return {"success": True, "result": {"notes": notes}}
 
@@ -421,10 +437,14 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                     elif action == "notes":
                         number = None
                         text = None
+                        kind = None
                         i = 2
                         while i < len(cmd_args):
                             if cmd_args[i] == "--step-number" and i + 1 < len(cmd_args):
                                 number = int(cmd_args[i + 1])
+                                i += 2
+                            elif cmd_args[i] == "--kind" and i + 1 < len(cmd_args):
+                                kind = cmd_args[i + 1]
                                 i += 2
                             elif not cmd_args[i].startswith("--"):
                                 text = cmd_args[i]
@@ -433,11 +453,11 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                                 i += 1
 
                         if text:
-                            plan_ctx.add_step_note(conn, text, step_number=number, user_id=_user_id, project_id=_project_id)
+                            plan_ctx.add_step_note(conn, text, step_number=number, user_id=_user_id, project_id=_project_id, kind=kind or "note")
                             notes = plan_ctx.list_step_notes(conn, step_number=number, user_id=_user_id, project_id=_project_id)
                             return {"success": True, "result": {"notes": notes}}
                         else:
-                            notes = plan_ctx.list_step_notes(conn, step_number=number, user_id=_user_id, project_id=_project_id)
+                            notes = plan_ctx.list_step_notes(conn, step_number=number, user_id=_user_id, project_id=_project_id, kind=kind)
                             return {"success": True, "result": {"notes": notes}}
                 finally:
                     conn.close()
@@ -513,6 +533,9 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         # Project tools (workspace metadata)
         "plan_project_show": _cmd_project_show,
         "plan_project_set": _cmd_project_set,
+        # Config tools
+        "plan_config_show": _cmd_config_show,
+        "plan_config_set": _cmd_config_set,
         # Utility
         "plan_readme": _cmd_readme,
     }
@@ -633,7 +656,7 @@ def _cmd_task_status(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
 
 
 def _cmd_task_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
-    """plan task notes [text] [--name <name>]"""
+    """plan task notes [text] [--name <name>] [--kind <kind>]"""
     cmd = ["task", "notes"]
 
     if text := args.get("text"):
@@ -641,6 +664,9 @@ def _cmd_task_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if name := args.get("name"):
         cmd.extend(["--name", name])
+
+    if kind := args.get("kind"):
+        cmd.extend(["--kind", kind])
 
     cmd.append("--json")
 
@@ -693,7 +719,7 @@ def _cmd_step_done(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _cmd_step_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
-    """plan step notes [text] [--step-number <number>] --json"""
+    """plan step notes [text] [--step-number <number>] [--kind <kind>] --json"""
     cmd = ["step", "notes"]
 
     if text := args.get("text"):
@@ -701,6 +727,9 @@ def _cmd_step_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if number := args.get("number"):
         cmd.extend(["--step-number", str(number)])
+
+    if kind := args.get("kind"):
+        cmd.extend(["--kind", kind])
 
     cmd.append("--json")
 
@@ -810,6 +839,40 @@ def _cmd_project_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
         cmd.extend(["--description", description])
     r = _run_plan_cmd(workspace_dir, cmd)
     return _with_display(r, _fmt_project(r.get("result", {})))
+
+
+# ── Config command handlers ──
+
+def _cmd_config_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Show current config (merged defaults + file overrides)."""
+    from config import get_config, DEFAULTS, config_path
+    cfg = get_config()
+    lines = ["**Configuration**", f"File: `{config_path()}`"]
+    for section, keys in cfg.items():
+        if isinstance(keys, dict):
+            lines.append(f"\n**{section}**")
+            defaults_section = DEFAULTS.get(section, {})
+            for key, value in keys.items():
+                default = defaults_section.get(key) if isinstance(defaults_section, dict) else None
+                suffix = "" if value == default else f" (default: {default})"
+                lines.append(f"  - **{key}**: `{value}`{suffix}")
+    return {"success": True, "result": cfg, "display": "\n".join(lines)}
+
+
+def _cmd_config_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Set a config key within a section."""
+    section = args.get("section")
+    key = args.get("key")
+    value = args.get("value")
+    if not section:
+        return {"success": False, "error": "section is required"}
+    if not key:
+        return {"success": False, "error": "key is required"}
+    if value is None:
+        return {"success": False, "error": "value is required"}
+    from config import set_config
+    cfg = set_config(section, key, value)
+    return {"success": True, "result": cfg, "display": f"Set **{section}.{key}** = `{value}`"}
 
 
 def _cmd_readme(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:

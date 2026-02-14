@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS context_notes (
     note_md TEXT NOT NULL,
     created_at TEXT NOT NULL,
     actor TEXT,
+    kind TEXT NOT NULL DEFAULT 'note',
     FOREIGN KEY (context_id) REFERENCES contexts(id)
 );
 
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS task_notes (
     task_id INTEGER NOT NULL,
     note_md TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'note',
     FOREIGN KEY (task_id) REFERENCES tasks(id)
 );
 

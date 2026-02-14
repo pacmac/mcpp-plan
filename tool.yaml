@@ -83,6 +83,10 @@ tools:
         name:
           type: string
           description: "Task name (omit for active task)"
+        kind:
+          type: string
+          enum: ["goal", "plan", "note"]
+          description: "Note kind: 'goal' (what), 'plan' (how), or 'note' (default). When reading, filters by kind."
 
   # ── Step tools (individual items) ──
   - name: plan_step_switch
@@ -136,6 +140,10 @@ tools:
         number:
           type: integer
           description: "Step number (omit for active step)"
+        kind:
+          type: string
+          enum: ["goal", "plan", "note"]
+          description: "Note kind: 'goal' (what), 'plan' (how), or 'note' (default). When reading, filters by kind."
 
   - name: plan_step_new
     description: "Create a new step in a task"
@@ -204,6 +212,31 @@ tools:
         description:
           type: string
           description: "Project description (markdown)"
+
+  # ── Config tools ──
+  - name: plan_config_show
+    description: "Show current configuration (merged defaults + config.yaml overrides)"
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_config_set
+    description: "Set a configuration value in config.yaml"
+    inputSchema:
+      type: object
+      properties:
+        section:
+          type: string
+          description: "Configuration section (e.g. 'workflow')"
+        key:
+          type: string
+          description: "Configuration key within the section"
+        value:
+          description: "Value to set (string, number, or boolean)"
+      required:
+        - section
+        - key
+        - value
 
   # ── Utility ──
   - name: plan_readme

@@ -63,7 +63,7 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_task_status` | Show active task and progress |
 | `plan_task_switch` | Switch to a different task |
 | `plan_task_archive` | Archive a completed task |
-| `plan_task_notes` | Add or read notes on a task |
+| `plan_task_notes` | Add or read notes on a task (supports `kind`: goal, plan, note) |
 
 ### Step tools
 
@@ -75,7 +75,7 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_step_done` | Mark a step as complete |
 | `plan_step_new` | Add a step to a task |
 | `plan_step_delete` | Soft-delete a step |
-| `plan_step_notes` | Add or read notes on a step |
+| `plan_step_notes` | Add or read notes on a step (supports `kind`: goal, plan, note) |
 
 ### User tools
 
@@ -90,6 +90,13 @@ All tools are exposed via MCP with the `plan_` prefix.
 |------|-------------|
 | `plan_project_show` | Show project metadata |
 | `plan_project_set` | Set project name and description |
+
+### Config tools
+
+| Tool | Description |
+|------|-------------|
+| `plan_config_show` | Show current configuration (merged defaults + overrides) |
+| `plan_config_set` | Set a configuration value (`section`, `key`, `value`) |
 
 ### Utility
 
@@ -127,6 +134,45 @@ planned  →  started  →  complete
 
 Only one step can be `started` at a time within a task. When you switch steps, the new one becomes `started`. Completing a step marks it `complete`.
 
+## Note kinds
+
+Notes have a `kind` field that classifies their purpose:
+
+| Kind | Purpose | When to use |
+|------|---------|-------------|
+| `goal` | **What** needs to be achieved | Before starting work -- defines the objective |
+| `plan` | **How** it will be done | Before starting work -- defines the approach |
+| `note` | Observations and updates | During execution -- freeform (default) |
+
+### Adding typed notes
+
+Pass the `kind` parameter when adding notes:
+
+```
+plan_task_notes  text="Implement user authentication"  kind="goal"
+plan_task_notes  text="Use JWT with refresh tokens"    kind="plan"
+plan_task_notes  text="Decided to skip OAuth for now"  kind="note"
+```
+
+Omitting `kind` defaults to `"note"`. You can also filter when reading: `plan_task_notes kind="goal"` returns only goal notes.
+
+### Workflow enforcement
+
+By default, tasks require at least one `goal` and one `plan` note before steps can be switched or completed. This ensures every task has a clear objective and approach before implementation begins. Disable this in `config.yaml`:
+
+```yaml
+workflow:
+  require_goal_and_plan: false
+```
+
+### Display
+
+`plan_task_show` displays goal and plan notes inline, so the purpose and approach are always visible when viewing a task.
+
+### Migrated tasks
+
+Tasks that existed before note kinds were introduced have migration placeholder notes (`"(migrated — no goal defined)"`). These are not displayed in `plan_task_show` and do not satisfy workflow enforcement. Replace them by adding real goal and plan notes to those tasks.
+
 ## Database
 
 All state lives in a single SQLite database at `plan.db` in the module directory, shared across all projects. Each project is identified by its absolute filesystem path.
@@ -141,10 +187,37 @@ Core tables:
 - **`tasks`** -- steps within a task (title, status, ordering)
 - **`context_state`** -- active step cursor per task
 - **`user_state`** -- active task cursor per user per project
-- **`context_notes`** / **`task_notes`** -- freeform notes
+- **`context_notes`** / **`task_notes`** -- typed notes (`goal`, `plan`, `note`)
 - **`changelog`** -- audit log of all state changes
 
 Schema migrations are applied automatically via numbered patches in `schema_patches/`.
+
+## Configuration
+
+Global settings live in `config.yaml` in the module directory (alongside `plan.db`). The file is optional — all keys have sensible defaults. Settings are organized by section.
+
+```yaml
+workflow:
+  require_goal_and_plan: true   # require goal and plan notes before step progress
+```
+
+### Defaults
+
+| Section | Key | Default | Description |
+|---------|-----|---------|-------------|
+| `workflow` | `require_goal_and_plan` | `true` | Require goal and plan notes before step progress |
+
+### Behavior
+
+- Missing file = all defaults
+- Missing keys = defaults for those keys
+- Unknown keys are preserved in the file but ignored by the system
+- Invalid YAML falls back to all defaults
+
+### Tools
+
+- `plan_config_show` -- show current settings (merged defaults + overrides)
+- `plan_config_set` -- set a value: requires `section`, `key`, and `value` parameters
 
 ## Hints & Tips
 
@@ -196,9 +269,10 @@ This keeps your current flow intact while making sure the thought doesn't get lo
 tool.yaml          MCP tool definitions (schema for all plan_* tools)
 mcpptool.py        MCP entry point -- routes tool calls to Python API
 context.py         Business logic (create/switch/complete tasks and steps)
+config.py          Global configuration (config.yaml loading + defaults)
 db.py              SQLite connection, schema management, user/project helpers
 schema.sql         Base schema
-schema_patches/    Incremental migrations (patch-4.sql through patch-7.sql)
+schema_patches/    Incremental migrations (patch-4.sql through patch-9.sql)
 ```
 
 ### Entry points

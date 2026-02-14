@@ -485,6 +485,8 @@ def switch_task(
             raise ValueError(f"Task {task_number} is deleted and cannot be activated.")
         target_task_id = int(task_row["id"])
 
+        _check_goal_plan_required(conn, context_id)
+
         # Do not mutate other task statuses. Only set the active task to started.
         conn.execute(
             "UPDATE tasks SET status = 'started', updated_at = ? WHERE id = ?",
@@ -527,12 +529,44 @@ def _resolve_task_id_by_number(
     return int(row["id"])
 
 
+VALID_NOTE_KINDS = ("goal", "plan", "note")
+
+
+def _check_goal_plan_required(conn, context_id: int) -> None:
+    """Raise if config requires goal+plan notes and they're missing real content."""
+    from . import config
+    get_config = config.get_config
+    cfg = get_config()
+    if not cfg.get("workflow", {}).get("require_goal_and_plan", True):
+        return
+    rows = conn.execute(
+        "SELECT kind, note_md FROM context_notes WHERE context_id = ? AND kind IN ('goal', 'plan')",
+        (context_id,),
+    ).fetchall()
+    kinds_present = set()
+    for r in rows:
+        # Migration placeholders don't count
+        if not r["note_md"].startswith("(migrated"):
+            kinds_present.add(r["kind"])
+    missing = []
+    if "goal" not in kinds_present:
+        missing.append("goal")
+    if "plan" not in kinds_present:
+        missing.append("plan")
+    if missing:
+        raise ValueError(
+            f"Cannot progress step: task is missing {' and '.join(missing)} notes. "
+            f"Add them with plan_task_notes (kind='{missing[0]}')."
+        )
+
+
 def list_task_notes(
     conn,
     task_number: int | None = None,
     context_ref: str | int | None = None,
     user_id: int | None = None,
     project_id: int | None = None,
+    kind: str | None = None,
 ) -> list[dict]:
     if context_ref is None:
         context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
@@ -550,11 +584,17 @@ def list_task_notes(
     else:
         task_id = _resolve_task_id_by_number(conn, context_id, task_number, allow_deleted=False)
 
-    rows = conn.execute(
-        "SELECT note_md, created_at FROM task_notes WHERE task_id = ? ORDER BY id",
-        (task_id,),
-    ).fetchall()
-    return [{"note": row["note_md"], "created_at": row["created_at"]} for row in rows]
+    if kind:
+        rows = conn.execute(
+            "SELECT note_md, created_at, kind FROM task_notes WHERE task_id = ? AND kind = ? ORDER BY id",
+            (task_id, kind),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT note_md, created_at, kind FROM task_notes WHERE task_id = ? ORDER BY id",
+            (task_id,),
+        ).fetchall()
+    return [{"note": row["note_md"], "created_at": row["created_at"], "kind": row["kind"]} for row in rows]
 
 
 def add_task_note(
@@ -565,7 +605,10 @@ def add_task_note(
     actor: str | None = None,
     user_id: int | None = None,
     project_id: int | None = None,
+    kind: str = "note",
 ) -> int:
+    if kind not in VALID_NOTE_KINDS:
+        raise ValueError(f"Invalid note kind '{kind}'. Must be one of: {', '.join(VALID_NOTE_KINDS)}")
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
@@ -586,8 +629,8 @@ def add_task_note(
             task_id = _resolve_task_id_by_number(conn, context_id, task_number, allow_deleted=False)
 
         cur = conn.execute(
-            "INSERT INTO task_notes (task_id, note_md, created_at) VALUES (?, ?, ?)",
-            (task_id, note_md, now),
+            "INSERT INTO task_notes (task_id, note_md, created_at, kind) VALUES (?, ?, ?, ?)",
+            (task_id, note_md, now, kind),
         )
         note_id = int(cur.lastrowid)
 
@@ -609,17 +652,24 @@ def list_context_notes(
     context_ref: str | int | None = None,
     user_id: int | None = None,
     project_id: int | None = None,
+    kind: str | None = None,
 ) -> list[dict]:
     if context_ref is None:
         context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
     else:
         context_id = resolve_context_id(conn, context_ref)
 
-    rows = conn.execute(
-        "SELECT note_md, created_at, actor FROM context_notes WHERE context_id = ? ORDER BY id",
-        (context_id,),
-    ).fetchall()
-    return [{"note": row["note_md"], "created_at": row["created_at"], "actor": row["actor"]} for row in rows]
+    if kind:
+        rows = conn.execute(
+            "SELECT note_md, created_at, actor, kind FROM context_notes WHERE context_id = ? AND kind = ? ORDER BY id",
+            (context_id, kind),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT note_md, created_at, actor, kind FROM context_notes WHERE context_id = ? ORDER BY id",
+            (context_id,),
+        ).fetchall()
+    return [{"note": row["note_md"], "created_at": row["created_at"], "actor": row["actor"], "kind": row["kind"]} for row in rows]
 
 
 def add_context_note(
@@ -629,7 +679,10 @@ def add_context_note(
     actor: str | None = None,
     user_id: int | None = None,
     project_id: int | None = None,
+    kind: str = "note",
 ) -> int:
+    if kind not in VALID_NOTE_KINDS:
+        raise ValueError(f"Invalid note kind '{kind}'. Must be one of: {', '.join(VALID_NOTE_KINDS)}")
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
@@ -639,8 +692,8 @@ def add_context_note(
             context_id = resolve_context_id(conn, context_ref)
 
         cur = conn.execute(
-            "INSERT INTO context_notes (context_id, note_md, created_at, actor) VALUES (?, ?, ?, ?)",
-            (context_id, note_md, now, actor),
+            "INSERT INTO context_notes (context_id, note_md, created_at, actor, kind) VALUES (?, ?, ?, ?, ?)",
+            (context_id, note_md, now, actor, kind),
         )
         note_id = int(cur.lastrowid)
 
@@ -842,6 +895,8 @@ def complete_task(
             raise ValueError(f"Task {task_number} is deleted and cannot be completed.")
         task_id = int(task_row["id"])
 
+        _check_goal_plan_required(conn, context_id)
+
         conn.execute(
             "UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?",
             (STATUS_COMPLETE, now, now, task_id),
@@ -937,6 +992,16 @@ def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | Non
         if active_row:
             active_task_number = active_row["task_number"]
 
+    # Fetch goal and plan notes for inline display
+    goal_plan_rows = conn.execute(
+        "SELECT kind, note_md FROM context_notes "
+        "WHERE context_id = ? AND kind IN ('goal', 'plan') AND note_md NOT LIKE '(migrated%' "
+        "ORDER BY kind, id",
+        (context_id,),
+    ).fetchall()
+    goal_notes = [r["note_md"] for r in goal_plan_rows if r["kind"] == "goal"]
+    plan_notes = [r["note_md"] for r in goal_plan_rows if r["kind"] == "plan"]
+
     return {
         "context_id": context_id,
         "context_name": context_row["name"],
@@ -944,6 +1009,8 @@ def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | Non
         "status_label": state_row["status_label"] if state_row else None,
         "last_event": state_row["last_event"] if state_row else None,
         "active_task_number": active_task_number,
+        "goal": goal_notes[-1] if goal_notes else None,
+        "plan": plan_notes[-1] if plan_notes else None,
         "tasks": [dict(row) for row in tasks],
     }
 
@@ -1287,14 +1354,14 @@ def delete_step(conn, step_number, task_ref=None, user_id=None, project_id=None)
     return delete_task(conn, step_number, context_ref=task_ref, user_id=user_id, project_id=project_id)
 
 
-def add_step_note(conn, note_md, step_number=None, user_id=None, project_id=None):
+def add_step_note(conn, note_md, step_number=None, user_id=None, project_id=None, kind="note"):
     """Adapter: step_number → task_number."""
-    return add_task_note(conn, note_md, task_number=step_number, user_id=user_id, project_id=project_id)
+    return add_task_note(conn, note_md, task_number=step_number, user_id=user_id, project_id=project_id, kind=kind)
 
 
-def list_step_notes(conn, step_number=None, user_id=None, project_id=None):
+def list_step_notes(conn, step_number=None, user_id=None, project_id=None, kind=None):
     """Adapter: step_number → task_number."""
-    return list_task_notes(conn, task_number=step_number, user_id=user_id, project_id=project_id)
+    return list_task_notes(conn, task_number=step_number, user_id=user_id, project_id=project_id, kind=kind)
 
 
 create_step = _orig_create_task  # already returns (step_id, step_number)

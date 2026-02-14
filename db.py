@@ -21,7 +21,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-LATEST_SCHEMA_VERSION = 8
+LATEST_SCHEMA_VERSION = 9
 
 
 # ── Central DB path ──
@@ -162,6 +162,68 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             project_id = ctx_row["project_id"] if ctx_row and ctx_row["project_id"] else None
             if project_id:
                 upsert_user_state(conn, user_id, project_id, gs["active_context_id"])
+
+
+    # Post-patch-9: split notes containing ## Goal / ## Plan headers into typed rows.
+    cn_columns = {row["name"] for row in conn.execute("PRAGMA table_info(context_notes)").fetchall()}
+    if "kind" in cn_columns:
+        _backfill_goal_plan_notes(conn)
+
+
+def _backfill_goal_plan_notes(conn: sqlite3.Connection) -> None:
+    """Parse notes with ## Goal / ## Plan headers, split into typed rows, remove placeholders."""
+    import re
+    rows = conn.execute(
+        "SELECT id, context_id, note_md, created_at, actor FROM context_notes "
+        "WHERE kind = 'note' AND (note_md LIKE '%## Goal%' OR note_md LIKE '%## Plan%')"
+    ).fetchall()
+    if not rows:
+        return
+
+    now = utc_now_iso()
+    for row in rows:
+        text = row["note_md"]
+        context_id = row["context_id"]
+        created_at = row["created_at"]
+        actor = row["actor"]
+
+        # Extract sections
+        goal_match = re.search(r'## Goal\s*\n(.*?)(?=\n## |\Z)', text, re.DOTALL)
+        plan_match = re.search(r'## Plan\s*\n(.*?)(?=\n## |\Z)', text, re.DOTALL)
+
+        if goal_match:
+            goal_text = goal_match.group(1).strip()
+            if goal_text:
+                conn.execute(
+                    "INSERT INTO context_notes (context_id, note_md, created_at, actor, kind) VALUES (?, ?, ?, ?, 'goal')",
+                    (context_id, goal_text, created_at, actor),
+                )
+                # Remove migration placeholder for this context
+                conn.execute(
+                    "DELETE FROM context_notes WHERE context_id = ? AND kind = 'goal' AND note_md LIKE '(migrated%'",
+                    (context_id,),
+                )
+
+        if plan_match:
+            plan_text = plan_match.group(1).strip()
+            if plan_text:
+                conn.execute(
+                    "INSERT INTO context_notes (context_id, note_md, created_at, actor, kind) VALUES (?, ?, ?, ?, 'plan')",
+                    (context_id, plan_text, created_at, actor),
+                )
+                conn.execute(
+                    "DELETE FROM context_notes WHERE context_id = ? AND kind = 'plan' AND note_md LIKE '(migrated%'",
+                    (context_id,),
+                )
+
+        # Reclassify the original note — remove the ## Goal/## Plan sections, keep remainder as 'note'
+        remainder = re.sub(r'## Goal\s*\n.*?(?=\n## |\Z)', '', text, flags=re.DOTALL)
+        remainder = re.sub(r'## Plan\s*\n.*?(?=\n## |\Z)', '', remainder, flags=re.DOTALL)
+        remainder = remainder.strip()
+        if remainder:
+            conn.execute("UPDATE context_notes SET note_md = ? WHERE id = ?", (remainder, row["id"]))
+        else:
+            conn.execute("DELETE FROM context_notes WHERE id = ?", (row["id"],))
 
 
 def upsert_global_state(conn: sqlite3.Connection, context_id: Optional[int]) -> None:
