@@ -1,160 +1,174 @@
-# Plan: Task Manager
+# mcpp-plan
 
-A persistent task manager that tracks your work across sessions. Just tell the agent what you want in plain English -- it handles the rest.
+A persistent task and step tracker for AI coding agents. Gives Claude Code (or any MCP-compatible agent) the ability to break work into tasks, track steps within each task, and remember exactly where it left off across sessions.
 
----
+## Why
 
-## Two Things to Know
+AI agents lose context between sessions. When you resume a conversation, the agent doesn't know what it was doing, which steps are done, or what's next. mcpp-plan solves this by giving agents a structured, persistent task manager backed by SQLite.
 
-### 1. Task
+The agent talks to it through MCP tools. You talk to the agent in plain English. The agent manages the rest.
 
-A **task** is what you're working on. Think of it as a project or focus area.
-
-Examples:
-- "Build the login page"
-- "Fix broken search results"
-- "Add CSV export feature"
-
-A task contains a list of steps -- the actions to get it done.
-
-### 2. Step
-
-A **step** is one action within a task.
-
-Example -- a "Build the login page" task might have:
-1. Create user database table
-2. Build login form
-3. Add password validation
-4. Write tests
-
-Each step tracks its own status: planned, started, or complete.
-
----
-
-## One Thing at a Time
-
-The agent focuses on **one task** and **one step** at a time. This is the core rule.
-
-```
-You are working on:
-  Task: Build the login page
-  Step:  #2 "Build login form" [started]
-```
-
-When you come back later, the agent remembers exactly where you left off.
-
----
-
-## How to Use It
-
-You talk to the agent in plain language. Here are examples of what you can say:
-
-### Start a new task
-
-> "Create a new task called build-login with title Build Login Page.
-> The steps are: create user database table, build login form,
-> add password validation, write tests."
-
-The agent creates the task, saves the steps, and sets step #1 as current.
-
-### Work through steps
-
-> "Show me step 1"
-
-> "What are the notes on this step?"
-
-> "Mark step 1 as done"
-
-> "Switch to step 2"
-
-### Add notes
-
-Notes can go on tasks or steps.
-
-> "Add a note to this task: Decided to use OAuth2 instead of custom auth"
-
-> "Add a note to step 3: Used bcrypt for password hashing"
-
-> "Show me the notes on this task"
-
-### Check where you are
-
-> "What am I working on?"
-
-> "Show me all steps"
-
-### Switch between tasks
-
-> "Show me all my tasks"
-
-> "Switch to the fix-search task"
-
-When you switch back later, the agent remembers which step you were on.
-
----
-
-## Step Lifecycle
-
-Every step moves through these states:
-
-```
-planned  -->  started  -->  complete
-```
-
-- **planned** -- Created but not started yet
-- **started** -- The step you are currently working on
-- **complete** -- Done
-
-Only one step can be started at a time within a task.
-
----
-
-## Users
-
-Each task belongs to a **user**, determined automatically from the OS login (`$USER`). This means multiple people can share the same project database with independent state.
-
-- Tasks are scoped to the current user by default
-- Each user has their own active task cursor
-- `plan task list` shows only your tasks
-- `plan task list --all` shows all users' tasks, grouped by user
-
-Users are created automatically on first use -- no setup needed.
-
-### Display name
-
-By default you show up as your OS login (e.g. `root`). Set an alias to change how you appear:
-
-> "Set my display name to PAC"
-
-> "Show my user info"
-
----
-
-## Hierarchy
-
-The full data model is:
+## How it works
 
 ```
 project
-  └── user (auto-detected from OS)
-        └── task (your focus area)
-              └── step (individual actions)
+  └── user (auto-detected from $USER)
+        └── task (a focus area, like "build login page")
+              └── step (individual action, like "create user table")
 ```
 
----
+- **Tasks** are top-level work items (features, bugs, refactors)
+- **Steps** are ordered actions within a task
+- **One task and one step are active at a time** -- the agent always knows what to do next
+- **State persists** in `~/.config/plan/plan.db` across all projects
+- **Multi-user** -- each OS user gets independent task cursors within a shared database
 
-## Project Identity
+## Installation
 
-Each workspace has a **project** record -- a name, path, and description. This is set once and included in every response so the agent always knows what project it's working in.
+mcpp-plan is an [mcpp](https://github.com/pacmac/mcpp) tool module. Install it by adding the tool path to your mcpp configuration.
 
-On first use, the project name defaults to the directory name. The agent will be prompted to provide a proper name and description via `plan_project_set`.
+### Prerequisites
 
-> "Set the project name to my-app and description to E-commerce platform backend"
+- Python 3.10+
+- SQLite 3 (bundled with Python)
+- An MCP-compatible agent (Claude Code, etc.)
 
-> "Show the project info"
+### Setup
 
----
+1. Clone or copy this directory into your mcpp tools path:
 
-## Where Data Lives
+```bash
+git clone <repo-url> /path/to/mcpp-plan
+```
 
-Everything is stored in a database in your project directory. One file, one source of truth. No markdown files to manage, no notes to lose, no status to remember.
+2. Register it with mcpp by adding the tool path to your configuration. The `tool.yaml` in this directory declares all available MCP tools.
+
+3. The database is created automatically at `~/.config/plan/plan.db` on first use. No setup required.
+
+## Tools
+
+All tools are exposed via MCP with the `plan_` prefix.
+
+### Task tools
+
+| Tool | Description |
+|------|-------------|
+| `plan_task_new` | Create a task with initial steps |
+| `plan_task_list` | List tasks (yours by default, `show_all` for everyone) |
+| `plan_task_show` | Show a task and its steps |
+| `plan_task_status` | Show active task and progress |
+| `plan_task_switch` | Switch to a different task |
+| `plan_task_archive` | Archive a completed task |
+| `plan_task_notes` | Add or read notes on a task |
+
+### Step tools
+
+| Tool | Description |
+|------|-------------|
+| `plan_step_list` | List steps in a task |
+| `plan_step_show` | Show step details |
+| `plan_step_switch` | Switch to a specific step |
+| `plan_step_done` | Mark a step as complete |
+| `plan_step_new` | Add a step to a task |
+| `plan_step_delete` | Soft-delete a step |
+| `plan_step_notes` | Add or read notes on a step |
+
+### User tools
+
+| Tool | Description |
+|------|-------------|
+| `plan_user_show` | Show current user info |
+| `plan_user_set` | Set your display name |
+
+### Project tools
+
+| Tool | Description |
+|------|-------------|
+| `plan_project_show` | Show project metadata |
+| `plan_project_set` | Set project name and description |
+
+### Utility
+
+| Tool | Description |
+|------|-------------|
+| `plan_readme` | Display the user-facing README |
+
+## Usage
+
+You interact with plan through your agent in natural language. Examples:
+
+```
+"Create a task called build-auth with steps: design schema, implement JWT, add middleware, write tests"
+
+"What am I working on?"
+
+"Mark step 1 as done"
+
+"Switch to step 2"
+
+"Add a note: decided to use refresh tokens"
+
+"Show me all my tasks"
+
+"Switch to the fix-search task"
+```
+
+The agent translates these into MCP tool calls automatically.
+
+## Step lifecycle
+
+```
+planned  →  started  →  complete
+```
+
+Only one step can be `started` at a time within a task. When you switch steps, the new one becomes `started`. Completing a step marks it `complete`.
+
+## Database
+
+All state lives in a single SQLite database at `~/.config/plan/plan.db`, shared across all projects. Each project is identified by its absolute filesystem path.
+
+### Schema
+
+Core tables:
+
+- **`project`** -- workspace metadata (name, path, description)
+- **`users`** -- OS users with optional display names
+- **`contexts`** -- tasks (name, status, owner, project)
+- **`tasks`** -- steps within a task (title, status, ordering)
+- **`context_state`** -- active step cursor per task
+- **`user_state`** -- active task cursor per user per project
+- **`context_notes`** / **`task_notes`** -- freeform notes
+- **`changelog`** -- audit log of all state changes
+
+Schema migrations are applied automatically via numbered patches in `schema_patches/`.
+
+## Architecture
+
+```
+tool.yaml          MCP tool definitions (schema for all plan_* tools)
+mcpptool.py        MCP entry point -- routes tool calls to Python API
+context.py         Business logic (create/switch/complete tasks and steps)
+db.py              SQLite connection, schema management, user/project helpers
+schema.sql         Base schema
+schema_patches/    Incremental migrations (patch-4.sql through patch-7.sql)
+```
+
+### Entry points
+
+- **`execute(tool_name, arguments, context)`** -- called by the MCP host for every tool invocation
+- **`get_info(context)`** -- returns tool metadata and existing task names for autocomplete
+
+### How a tool call flows
+
+1. MCP host calls `execute("plan_step_done", {"number": 3}, {"workspace_dir": "/my/project"})`
+2. `mcpptool.py` routes to `_cmd_step_done`
+3. Handler builds a command list and calls `_run_plan_cmd`
+4. `_run_plan_cmd` dynamically imports `db.py` and `context.py`, opens the central DB, and dispatches
+5. `context.py` runs the operation in a transaction
+6. Result dict is returned with structured data and a `display` string for the user
+
+## License
+
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+
+Free for personal use, research, education, non-profits, and government. Not permitted for commercial use. See [LICENSE](LICENSE) for the full text.

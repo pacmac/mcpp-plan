@@ -27,6 +27,7 @@ __pycache__/
 
 # Scratch/offline/temp
 .off/
+tmp/
 *.tmp
 *.temp
 .tmp/

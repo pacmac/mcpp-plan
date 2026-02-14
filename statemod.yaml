@@ -1,8 +1,0 @@
-# Gemini CLI Project Configuration
-project_root: .
-contexts_dir: agents/contexts
-downloads_dir: agents/.downloads
-global_state_file: agents/contexts/.state.yaml
-scratch_file: agents/contexts/.SCRATCH.md
-agents_md: agents/AGENTS.md
-default_agent: User

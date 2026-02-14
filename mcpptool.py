@@ -1,7 +1,7 @@
 """
 Plan: Task & Step Manager (MCP Tool Wrapper)
 
-Exposes agentmod V2 task and step operations as MCP tools.
+Exposes plan task and step operations as MCP tools.
 Operates on workspace-local plan.db for autonomous task tracking.
 """
 
@@ -145,33 +145,33 @@ def get_info(context: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
-def _agentmod_path() -> Path:
-    """Resolve path to the agentmod package directory (this module's own directory)."""
+def _pkg_path() -> Path:
+    """Resolve path to the package directory (this module's own directory)."""
     return Path(__file__).resolve().parent
 
 
-def _load_agentmod(pkg_path: Path):
-    """Import agentmod db and context modules. Returns (db_mod, ctx_mod)."""
+def _load_pkg(pkg_path: Path):
+    """Import plan db and context modules. Returns (db_mod, ctx_mod)."""
     import importlib.util
 
     pkg_spec = importlib.util.spec_from_file_location(
-        "agentmod", pkg_path / "__init__.py",
+        "mcpp_plan", pkg_path / "__init__.py",
         submodule_search_locations=[str(pkg_path)]
     )
     pkg_module = importlib.util.module_from_spec(pkg_spec)
-    sys.modules["agentmod"] = pkg_module
+    sys.modules["mcpp_plan"] = pkg_module
     if pkg_spec.loader:
         pkg_spec.loader.exec_module(pkg_module)
 
-    db_spec = importlib.util.spec_from_file_location("agentmod.db", pkg_path / "db.py")
+    db_spec = importlib.util.spec_from_file_location("mcpp_plan.db", pkg_path / "db.py")
     plan_db_mod = importlib.util.module_from_spec(db_spec)
-    sys.modules["agentmod.db"] = plan_db_mod
+    sys.modules["mcpp_plan.db"] = plan_db_mod
     if db_spec.loader:
         db_spec.loader.exec_module(plan_db_mod)
 
-    context_spec = importlib.util.spec_from_file_location("agentmod.context", pkg_path / "context.py")
+    context_spec = importlib.util.spec_from_file_location("mcpp_plan.context", pkg_path / "context.py")
     plan_ctx = importlib.util.module_from_spec(context_spec)
-    sys.modules["agentmod.context"] = plan_ctx
+    sys.modules["mcpp_plan.context"] = plan_ctx
     if context_spec.loader:
         context_spec.loader.exec_module(plan_ctx)
 
@@ -206,15 +206,15 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
     # Clean up stale module cache from previous naming (v2.*)
     for stale in [k for k in sys.modules if k == "v2" or k.startswith("v2.")]:
         del sys.modules[stale]
-    for stale in [k for k in sys.modules if k == "agentmod" or k.startswith("agentmod.")]:
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
         del sys.modules[stale]
 
     workspace_dir = Path(workspace_dir)
 
-    pkg_path = _agentmod_path()
+    pkg_path = _pkg_path()
 
     try:
-        plan_db_mod, plan_ctx = _load_agentmod(pkg_path)
+        plan_db_mod, plan_ctx = _load_pkg(pkg_path)
 
         # Route commands
         command = cmd_args[0]
@@ -528,8 +528,8 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         # Read project metadata for injection and nudge
         global _project_nudge_sent
         try:
-            pkg_path = _agentmod_path()
-            plan_db_mod, plan_ctx = _load_agentmod(pkg_path)
+            pkg_path = _pkg_path()
+            plan_db_mod, plan_ctx = _load_pkg(pkg_path)
             conn, project, _is_new, _user_id, _proj_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
             conn.close()
 
@@ -752,10 +752,10 @@ def _fmt_user(data: dict) -> str:
 
 def _cmd_user_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """Show current user info."""
-    for stale in [k for k in sys.modules if k == "agentmod" or k.startswith("agentmod.")]:
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
         del sys.modules[stale]
-    pkg_path = _agentmod_path()
-    plan_db_mod, plan_ctx = _load_agentmod(pkg_path)
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     conn, _project, _is_new, user_id, _project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
     user = plan_db_mod.get_user(conn, user_id)
     conn.close()
@@ -770,10 +770,10 @@ def _cmd_user_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     alias = args.get("alias")
     if not alias:
         return {"success": False, "error": "alias is required"}
-    for stale in [k for k in sys.modules if k == "agentmod" or k.startswith("agentmod.")]:
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
         del sys.modules[stale]
-    pkg_path = _agentmod_path()
-    plan_db_mod, plan_ctx = _load_agentmod(pkg_path)
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     conn, _project, _is_new, user_id, _project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
     user = plan_db_mod.set_user_display_name(conn, user_id, alias)
     conn.close()
