@@ -154,15 +154,16 @@ def create_task(
     sub_index: Optional[int] = None,
     actor: Optional[str] = None,
     user_id: Optional[int] = None,
+    project_id: Optional[int] = None,
 ) -> tuple[int, int]:
     """Create a new task for a context."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         context_id = (
-            resolve_active_context_id(conn, user_id=user_id)
+            resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
             if context_ref is None
-            else resolve_context_id(conn, context_ref)
+            else resolve_context_id(conn, context_ref, project_id=project_id)
         )
 
         if parent_id is None and sub_index is not None:
@@ -463,15 +464,16 @@ def switch_task(
     context_ref: str | int | None = None,
     actor: Optional[str] = None,
     user_id: Optional[int] = None,
+    project_id: Optional[int] = None,
 ) -> int:
     """Switch the active task in a context by task number."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         context_id = (
-            resolve_active_context_id(conn, user_id=user_id)
+            resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
             if context_ref is None
-            else resolve_context_id(conn, context_ref)
+            else resolve_context_id(conn, context_ref, project_id=project_id)
         )
         task_row = conn.execute(
             "SELECT id, is_deleted FROM tasks WHERE context_id = ? AND task_number = ?",
@@ -530,9 +532,10 @@ def list_task_notes(
     task_number: int | None = None,
     context_ref: str | int | None = None,
     user_id: int | None = None,
+    project_id: int | None = None,
 ) -> list[dict]:
     if context_ref is None:
-        context_id = resolve_active_context_id(conn, user_id=user_id)
+        context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
     else:
         context_id = resolve_context_id(conn, context_ref)
 
@@ -561,12 +564,13 @@ def add_task_note(
     context_ref: str | int | None = None,
     actor: str | None = None,
     user_id: int | None = None,
+    project_id: int | None = None,
 ) -> int:
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         if context_ref is None:
-            context_id = resolve_active_context_id(conn, user_id=user_id)
+            context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
         else:
             context_id = resolve_context_id(conn, context_ref)
 
@@ -604,9 +608,10 @@ def list_context_notes(
     conn,
     context_ref: str | int | None = None,
     user_id: int | None = None,
+    project_id: int | None = None,
 ) -> list[dict]:
     if context_ref is None:
-        context_id = resolve_active_context_id(conn, user_id=user_id)
+        context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
     else:
         context_id = resolve_context_id(conn, context_ref)
 
@@ -623,12 +628,13 @@ def add_context_note(
     context_ref: str | int | None = None,
     actor: str | None = None,
     user_id: int | None = None,
+    project_id: int | None = None,
 ) -> int:
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         if context_ref is None:
-            context_id = resolve_active_context_id(conn, user_id=user_id)
+            context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
         else:
             context_id = resolve_context_id(conn, context_ref)
 
@@ -732,15 +738,16 @@ def delete_task(
     context_ref: str | int | None = None,
     actor: str | None = None,
     user_id: int | None = None,
+    project_id: int | None = None,
 ) -> int:
     """Soft-delete a task by setting is_deleted = 1."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         context_id = (
-            resolve_active_context_id(conn, user_id=user_id)
+            resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
             if context_ref is None
-            else resolve_context_id(conn, context_ref)
+            else resolve_context_id(conn, context_ref, project_id=project_id)
         )
         row = conn.execute(
             "SELECT id, is_deleted FROM tasks WHERE context_id = ? AND task_number = ?",
@@ -813,15 +820,16 @@ def complete_task(
     context_ref: str | int | None = None,
     actor: str | None = None,
     user_id: int | None = None,
+    project_id: int | None = None,
 ) -> int:
     """Mark a task as complete (context-scoped task number)."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
         context_id = (
-            resolve_active_context_id(conn, user_id=user_id)
+            resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
             if context_ref is None
-            else resolve_context_id(conn, context_ref)
+            else resolve_context_id(conn, context_ref, project_id=project_id)
         )
         task_row = conn.execute(
             "SELECT id, is_deleted FROM tasks WHERE context_id = ? AND task_number = ?",
@@ -860,31 +868,47 @@ def complete_task(
 
 def get_task_summary(
     conn,
-    task_number: int,
+    task_number: int | None = None,
     context_ref: str | int | None = None,
     user_id: int | None = None,
+    project_id: int | None = None,
 ) -> dict:
     if context_ref is None:
-        context_id = resolve_active_context_id(conn, user_id=user_id)
+        context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
     else:
         context_id = resolve_context_id(conn, context_ref)
 
-    row = conn.execute(
-        "SELECT id, context_id, task_number, title, description_md, status, is_deleted, parent_id, "
-        "sort_index, sub_index, created_at, updated_at, completed_at "
-        "FROM tasks WHERE context_id = ? AND task_number = ?",
-        (context_id, task_number),
-    ).fetchone()
+    if task_number is None:
+        state_row = conn.execute(
+            "SELECT active_task_id FROM context_state WHERE context_id = ?",
+            (context_id,),
+        ).fetchone()
+        if not state_row or not state_row["active_task_id"]:
+            raise ValueError("No active step is set.")
+        active_id = int(state_row["active_task_id"])
+        row = conn.execute(
+            "SELECT id, context_id, task_number, title, description_md, status, is_deleted, parent_id, "
+            "sort_index, sub_index, created_at, updated_at, completed_at "
+            "FROM tasks WHERE id = ?",
+            (active_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id, context_id, task_number, title, description_md, status, is_deleted, parent_id, "
+            "sort_index, sub_index, created_at, updated_at, completed_at "
+            "FROM tasks WHERE context_id = ? AND task_number = ?",
+            (context_id, task_number),
+        ).fetchone()
     if not row:
         raise ValueError(f"Task {task_number} not found in context {context_id}.")
     return dict(row)
 
 
-def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | None = None) -> dict:
+def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | None = None, project_id: int | None = None) -> dict:
     context_id = (
-        resolve_active_context_id(conn, user_id=user_id)
+        resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
         if context_ref is None
-        else resolve_context_id(conn, context_ref)
+        else resolve_context_id(conn, context_ref, project_id=project_id)
     )
     context_row = conn.execute(
         "SELECT id, name, description_md FROM contexts WHERE id = ?",
@@ -924,11 +948,11 @@ def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | Non
     }
 
 
-def get_plan_status(conn, context_ref: str | int | None = None, user_id: int | None = None) -> dict:
+def get_plan_status(conn, context_ref: str | int | None = None, user_id: int | None = None, project_id: int | None = None) -> dict:
     context_id = (
-        resolve_active_context_id(conn, user_id=user_id)
+        resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
         if context_ref is None
-        else resolve_context_id(conn, context_ref)
+        else resolve_context_id(conn, context_ref, project_id=project_id)
     )
     context_row = conn.execute(
         "SELECT id, name, description_md FROM contexts WHERE id = ?",
@@ -1028,11 +1052,11 @@ def list_contexts(conn, user_id: int | None = None, show_all_users: bool = False
     return contexts
 
 
-def list_tasks(conn, context_ref: str | int | None = None, user_id: int | None = None) -> dict:
+def list_tasks(conn, context_ref: str | int | None = None, user_id: int | None = None, project_id: int | None = None) -> dict:
     context_id = (
-        resolve_active_context_id(conn, user_id=user_id)
+        resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
         if context_ref is None
-        else resolve_context_id(conn, context_ref)
+        else resolve_context_id(conn, context_ref, project_id=project_id)
     )
     context_row = conn.execute(
         "SELECT id, name, description_md FROM contexts WHERE id = ?",
@@ -1100,9 +1124,10 @@ def get_task_logs(
     task_number: int,
     context_ref: str | int | None = None,
     user_id: int | None = None,
+    project_id: int | None = None,
 ) -> dict:
     if context_ref is None:
-        context_id = resolve_active_context_id(conn, user_id=user_id)
+        context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
     else:
         context_id = resolve_context_id(conn, context_ref)
 
@@ -1226,7 +1251,7 @@ def archive_context(conn, name: str, user_id: int | None = None, project_id: int
     """Archive a context by name. Refuses to archive the active context."""
     context_id = resolve_context_id(conn, name, project_id=project_id)
     if user_id is not None:
-        active_id = db.get_active_context_id_for_user(conn, user_id)
+        active_id = db.get_active_context_id_for_user(conn, user_id, project_id=project_id)
     else:
         active_id = db.get_active_context_id(conn)
     if context_id == active_id:
@@ -1252,24 +1277,24 @@ switch_step = _orig_switch_task
 complete_step = complete_task
 
 
-def get_step_summary(conn, step_number=None, user_id=None, **kw):
+def get_step_summary(conn, step_number=None, user_id=None, project_id=None, **kw):
     """Adapter: step_number → task_number."""
-    return get_task_summary(conn, task_number=step_number, user_id=user_id, **kw)
+    return get_task_summary(conn, task_number=step_number, user_id=user_id, project_id=project_id, **kw)
 
 
-def delete_step(conn, step_number, task_ref=None, user_id=None):
+def delete_step(conn, step_number, task_ref=None, user_id=None, project_id=None):
     """Adapter: task_ref → context_ref."""
-    return delete_task(conn, step_number, context_ref=task_ref, user_id=user_id)
+    return delete_task(conn, step_number, context_ref=task_ref, user_id=user_id, project_id=project_id)
 
 
-def add_step_note(conn, note_md, step_number=None, user_id=None):
+def add_step_note(conn, note_md, step_number=None, user_id=None, project_id=None):
     """Adapter: step_number → task_number."""
-    return add_task_note(conn, note_md, task_number=step_number, user_id=user_id)
+    return add_task_note(conn, note_md, task_number=step_number, user_id=user_id, project_id=project_id)
 
 
-def list_step_notes(conn, step_number=None, user_id=None):
+def list_step_notes(conn, step_number=None, user_id=None, project_id=None):
     """Adapter: step_number → task_number."""
-    return list_task_notes(conn, task_number=step_number, user_id=user_id)
+    return list_task_notes(conn, task_number=step_number, user_id=user_id, project_id=project_id)
 
 
 create_step = _orig_create_task  # already returns (step_id, step_number)

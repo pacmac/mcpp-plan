@@ -12,9 +12,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-DB_NAME = ".state"  # legacy, no longer used
-LEGACY_DB_NAMES = ["plan.db", "agent.db"]  # legacy, no longer used
-
 _project_nudge_sent = False
 
 
@@ -120,18 +117,6 @@ def _fmt_step_show(data: dict) -> str:
     if desc:
         line += f"\n{desc}"
     return line
-
-
-def _find_db_path(workspace_dir: Path) -> Path:
-    """Return the database path, preferring DB_NAME but falling back to LEGACY_DB_NAMES."""
-    primary = workspace_dir / DB_NAME
-    if primary.exists():
-        return primary
-    for legacy_name in LEGACY_DB_NAMES:
-        legacy = workspace_dir / legacy_name
-        if legacy.exists():
-            return legacy
-    return primary  # default for new databases
 
 
 def get_info(context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -270,7 +255,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         user_id=_user_id,
                         project_id=_project_id,
                     )
-                    result = plan_ctx.get_task_show(conn, task_id)
+                    result = plan_ctx.get_task_show(conn, task_id, project_id=_project_id)
                     conn.close()
                     return {"success": True, "result": result}
 
@@ -315,7 +300,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                             conn.close()
                             return {"success": False, "error": "task name required"}
                         plan_ctx.switch_task(conn, name, user_id=_user_id, project_id=_project_id)
-                        result = plan_ctx.get_task_status(conn, user_id=_user_id)
+                        result = plan_ctx.get_task_status(conn, user_id=_user_id, project_id=_project_id)
                         conn.close()
                         return {"success": True, "result": result}
 
@@ -325,12 +310,12 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                             task_id = plan_ctx.resolve_task_id(conn, name, project_id=_project_id)
                         else:
                             task_id = plan_ctx.resolve_active_task_id(conn, user_id=_user_id, project_id=_project_id)
-                        result = plan_ctx.get_task_show(conn, task_id)
+                        result = plan_ctx.get_task_show(conn, task_id, project_id=_project_id)
                         conn.close()
                         return {"success": True, "result": result}
 
                     elif action == "status":
-                        result = plan_ctx.get_task_status(conn, user_id=_user_id)
+                        result = plan_ctx.get_task_status(conn, user_id=_user_id, project_id=_project_id)
                         conn.close()
                         return {"success": True, "result": result}
 
@@ -349,12 +334,12 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                                 i += 1
 
                         if text:
-                            plan_ctx.add_context_note(conn, text, context_ref=name, user_id=_user_id)
-                            notes = plan_ctx.list_context_notes(conn, context_ref=name, user_id=_user_id)
+                            plan_ctx.add_context_note(conn, text, context_ref=name, user_id=_user_id, project_id=_project_id)
+                            notes = plan_ctx.list_context_notes(conn, context_ref=name, user_id=_user_id, project_id=_project_id)
                             conn.close()
                             return {"success": True, "result": {"notes": notes}}
                         else:
-                            notes = plan_ctx.list_context_notes(conn, context_ref=name, user_id=_user_id)
+                            notes = plan_ctx.list_context_notes(conn, context_ref=name, user_id=_user_id, project_id=_project_id)
                             conn.close()
                             return {"success": True, "result": {"notes": notes}}
 
@@ -365,28 +350,33 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
 
                 try:
                     if action == "list":
-                        result = plan_ctx.list_steps(conn, user_id=_user_id)
+                        task_ref = None
+                        if len(cmd_args) > 2 and not cmd_args[2].startswith("--"):
+                            task_ref = cmd_args[2]
+                        result = plan_ctx.list_steps(conn, context_ref=task_ref, user_id=_user_id, project_id=_project_id)
                         return {"success": True, "result": result}
 
                     elif action == "switch":
                         number = int(cmd_args[2]) if len(cmd_args) > 2 else None
                         if number is None:
                             return {"success": False, "error": "step number required"}
-                        plan_ctx.switch_step(conn, number, user_id=_user_id)
-                        result = plan_ctx.get_step_summary(conn, step_number=number, user_id=_user_id)
+                        plan_ctx.switch_step(conn, number, user_id=_user_id, project_id=_project_id)
+                        result = plan_ctx.get_step_summary(conn, step_number=number, user_id=_user_id, project_id=_project_id)
                         return {"success": True, "result": result}
 
                     elif action == "show":
-                        number = int(cmd_args[2]) if len(cmd_args) > 2 else None
-                        result = plan_ctx.get_step_summary(conn, step_number=number, user_id=_user_id)
+                        number = None
+                        if len(cmd_args) > 2 and not cmd_args[2].startswith("--"):
+                            number = int(cmd_args[2])
+                        result = plan_ctx.get_step_summary(conn, step_number=number, user_id=_user_id, project_id=_project_id)
                         return {"success": True, "result": result}
 
                     elif action == "done":
                         number = int(cmd_args[2]) if len(cmd_args) > 2 else None
                         if number is None:
                             return {"success": False, "error": "step number required"}
-                        plan_ctx.complete_step(conn, number, user_id=_user_id)
-                        result = plan_ctx.get_step_summary(conn, step_number=number, user_id=_user_id)
+                        plan_ctx.complete_step(conn, number, user_id=_user_id, project_id=_project_id)
+                        result = plan_ctx.get_step_summary(conn, step_number=number, user_id=_user_id, project_id=_project_id)
                         return {"success": True, "result": result}
 
                     elif action == "new":
@@ -406,9 +396,9 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                             else:
                                 i += 1
                         step_id, step_number = plan_ctx.create_step(
-                            conn, task_ref, title, description_md=description_md, user_id=_user_id
+                            conn, task_ref, title, description_md=description_md, user_id=_user_id, project_id=_project_id
                         )
-                        result = plan_ctx.get_step_summary(conn, step_number=step_number, user_id=_user_id)
+                        result = plan_ctx.get_step_summary(conn, step_number=step_number, user_id=_user_id, project_id=_project_id)
                         return {"success": True, "result": result}
 
                     elif action == "delete":
@@ -423,8 +413,8 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                                 i += 2
                             else:
                                 i += 1
-                        plan_ctx.delete_step(conn, number, task_ref=task_ref, user_id=_user_id)
-                        result = plan_ctx.list_steps(conn, user_id=_user_id)
+                        plan_ctx.delete_step(conn, number, task_ref=task_ref, user_id=_user_id, project_id=_project_id)
+                        result = plan_ctx.list_steps(conn, user_id=_user_id, project_id=_project_id)
                         return {"success": True, "result": result}
 
                     elif action == "notes":
@@ -442,11 +432,11 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                                 i += 1
 
                         if text:
-                            plan_ctx.add_step_note(conn, text, step_number=number, user_id=_user_id)
-                            notes = plan_ctx.list_step_notes(conn, step_number=number, user_id=_user_id)
+                            plan_ctx.add_step_note(conn, text, step_number=number, user_id=_user_id, project_id=_project_id)
+                            notes = plan_ctx.list_step_notes(conn, step_number=number, user_id=_user_id, project_id=_project_id)
                             return {"success": True, "result": {"notes": notes}}
                         else:
-                            notes = plan_ctx.list_step_notes(conn, step_number=number, user_id=_user_id)
+                            notes = plan_ctx.list_step_notes(conn, step_number=number, user_id=_user_id, project_id=_project_id)
                             return {"success": True, "result": {"notes": notes}}
                 finally:
                     conn.close()
