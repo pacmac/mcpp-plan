@@ -23,8 +23,8 @@ class TaskInput:
     sub_index: Optional[int] = None
 
 
-def resolve_context_id(conn, context_ref: str | int) -> int:
-    """Resolve a context reference to an integer ID."""
+def resolve_context_id(conn, context_ref: str | int, project_id: int | None = None) -> int:
+    """Resolve a context reference to an integer ID, optionally scoped to a project."""
     if isinstance(context_ref, int):
         row = conn.execute(
             "SELECT id FROM contexts WHERE id = ?",
@@ -47,18 +47,25 @@ def resolve_context_id(conn, context_ref: str | int) -> int:
         if row:
             return int(row["id"])
 
-    row = conn.execute(
-        "SELECT id FROM contexts WHERE name = ?",
-        (str(context_ref),),
-    ).fetchone()
+    # Name lookup: scope to project if provided.
+    if project_id is not None:
+        row = conn.execute(
+            "SELECT id FROM contexts WHERE name = ? AND project_id = ?",
+            (str(context_ref), project_id),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id FROM contexts WHERE name = ?",
+            (str(context_ref),),
+        ).fetchone()
     if not row:
         raise ValueError(f"Context '{context_ref}' not found.")
     return int(row["id"])
 
 
-def resolve_active_context_id(conn, user_id: int | None = None) -> int:
+def resolve_active_context_id(conn, user_id: int | None = None, project_id: int | None = None) -> int:
     if user_id is not None:
-        context_id = db.get_active_context_id_for_user(conn, user_id)
+        context_id = db.get_active_context_id_for_user(conn, user_id, project_id=project_id)
     else:
         context_id = db.get_active_context_id(conn)
     if context_id is None:
@@ -269,6 +276,7 @@ def create_context(
     auto_complete_first_task: bool = False,
     actor: Optional[str] = None,
     user_id: Optional[int] = None,
+    project_id: Optional[int] = None,
 ) -> int:
     """Create a new context and optional initial tasks.
 
@@ -280,9 +288,9 @@ def create_context(
     conn.execute("BEGIN")
     try:
         cur = conn.execute(
-            "INSERT INTO contexts (name, status, description_md, user_id, created_at, updated_at) "
-            "VALUES (?, 'active', ?, ?, ?, ?)",
-            (name, description_md, user_id, now, now),
+            "INSERT INTO contexts (name, status, description_md, user_id, project_id, created_at, updated_at) "
+            "VALUES (?, 'active', ?, ?, ?, ?, ?)",
+            (name, description_md, user_id, project_id, now, now),
         )
         context_id = int(cur.lastrowid)
 
@@ -354,8 +362,8 @@ def create_context(
             _set_next_step_for_new_task(conn, context_id, now)
 
         if set_active:
-            if user_id is not None:
-                db.upsert_user_state(conn, user_id, context_id)
+            if user_id is not None and project_id is not None:
+                db.upsert_user_state(conn, user_id, project_id, context_id)
             db.upsert_global_state(conn, context_id)
 
         conn.execute(
@@ -376,14 +384,15 @@ def switch_context(
     context_ref: str | int,
     actor: Optional[str] = None,
     user_id: Optional[int] = None,
+    project_id: Optional[int] = None,
 ) -> int:
     """Set the active context."""
     now = db.utc_now_iso()
     conn.execute("BEGIN")
     try:
-        context_id = resolve_context_id(conn, context_ref)
-        if user_id is not None:
-            db.upsert_user_state(conn, user_id, context_id)
+        context_id = resolve_context_id(conn, context_ref, project_id=project_id)
+        if user_id is not None and project_id is not None:
+            db.upsert_user_state(conn, user_id, project_id, context_id)
         db.upsert_global_state(conn, context_id)
         # Ensure the target context has an active task.
         state_row = conn.execute(
@@ -642,27 +651,47 @@ def add_context_note(
         raise
 
 
-def get_project(conn) -> dict | None:
-    """Get project metadata (singleton row)."""
-    row = conn.execute(
-        "SELECT project_name, absolute_path, description_md, created_at FROM project WHERE id = 1"
-    ).fetchone()
+def get_project(conn, project_id: int | None = None, absolute_path: str | None = None) -> dict | None:
+    """Get project metadata by id or path."""
+    if project_id is not None:
+        row = conn.execute(
+            "SELECT id, project_name, absolute_path, description_md, created_at FROM project WHERE id = ?",
+            (project_id,),
+        ).fetchone()
+    elif absolute_path is not None:
+        row = conn.execute(
+            "SELECT id, project_name, absolute_path, description_md, created_at FROM project WHERE absolute_path = ?",
+            (absolute_path,),
+        ).fetchone()
+    else:
+        # Legacy fallback: get first project
+        row = conn.execute(
+            "SELECT id, project_name, absolute_path, description_md, created_at FROM project ORDER BY id LIMIT 1"
+        ).fetchone()
     if not row:
         return None
     return dict(row)
 
 
-def set_project(conn, project_name: str | None = None, absolute_path: str | None = None,
-                description_md: str | None = None) -> dict:
-    """Create or update the singleton project row."""
+def set_project(conn, project_id: int | None = None, project_name: str | None = None,
+                absolute_path: str | None = None, description_md: str | None = None) -> dict:
+    """Create or update a project row."""
     now = db.utc_now_iso()
-    existing = get_project(conn)
+
+    if project_id is not None:
+        existing = get_project(conn, project_id=project_id)
+    elif absolute_path is not None:
+        existing = get_project(conn, absolute_path=absolute_path)
+    else:
+        existing = None
+
     if existing is None:
-        conn.execute(
-            "INSERT INTO project (id, project_name, absolute_path, description_md, created_at) "
-            "VALUES (1, ?, ?, ?, ?)",
+        cur = conn.execute(
+            "INSERT INTO project (project_name, absolute_path, description_md, created_at) "
+            "VALUES (?, ?, ?, ?)",
             (project_name or "unnamed", absolute_path or "", description_md, now),
         )
+        return get_project(conn, project_id=cur.lastrowid)
     else:
         updates, params = [], []
         if project_name is not None:
@@ -675,19 +704,20 @@ def set_project(conn, project_name: str | None = None, absolute_path: str | None
             updates.append("description_md = ?")
             params.append(description_md)
         if updates:
+            params.append(existing["id"])
             conn.execute(
-                f"UPDATE project SET {', '.join(updates)} WHERE id = 1",
+                f"UPDATE project SET {', '.join(updates)} WHERE id = ?",
                 params,
             )
-    return get_project(conn)
+        return get_project(conn, project_id=existing["id"])
 
 
-def ensure_project(conn, cwd: str) -> dict:
-    """Ensure project row exists, auto-populating from CWD if needed.
+def ensure_project(conn, cwd: str) -> tuple[dict, bool]:
+    """Ensure project row exists for this CWD, auto-populating if needed.
 
     Returns (project_dict, is_new) tuple.
     """
-    existing = get_project(conn)
+    existing = get_project(conn, absolute_path=cwd)
     if existing is not None:
         return existing, False
     from pathlib import Path
@@ -946,33 +976,35 @@ def get_plan_status(conn, context_ref: str | int | None = None, user_id: int | N
     }
 
 
-def list_contexts(conn, user_id: int | None = None, show_all_users: bool = False) -> list[dict]:
+def list_contexts(conn, user_id: int | None = None, show_all_users: bool = False,
+                   project_id: int | None = None) -> list[dict]:
     active_id = None
     if user_id is not None:
-        active_id = db.get_active_context_id_for_user(conn, user_id)
+        active_id = db.get_active_context_id_for_user(conn, user_id, project_id=project_id)
     if active_id is None:
         active_id = db.get_active_context_id(conn)
 
+    # Build WHERE clauses
+    conditions = []
+    params = []
     if user_id is not None and not show_all_users:
-        rows = conn.execute(
-            "SELECT c.id, c.name, c.status, c.description_md, c.user_id, "
-            "t.task_number, t.title "
-            "FROM contexts c "
-            "LEFT JOIN context_state s ON s.context_id = c.id "
-            "LEFT JOIN tasks t ON t.id = s.active_task_id "
-            "WHERE c.user_id = ? "
-            "ORDER BY c.id",
-            (user_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT c.id, c.name, c.status, c.description_md, c.user_id, "
-            "t.task_number, t.title "
-            "FROM contexts c "
-            "LEFT JOIN context_state s ON s.context_id = c.id "
-            "LEFT JOIN tasks t ON t.id = s.active_task_id "
-            "ORDER BY c.id"
-        ).fetchall()
+        conditions.append("c.user_id = ?")
+        params.append(user_id)
+    if project_id is not None:
+        conditions.append("c.project_id = ?")
+        params.append(project_id)
+
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    rows = conn.execute(
+        "SELECT c.id, c.name, c.status, c.description_md, c.user_id, "
+        "t.task_number, t.title "
+        "FROM contexts c "
+        "LEFT JOIN context_state s ON s.context_id = c.id "
+        "LEFT JOIN tasks t ON t.id = s.active_task_id"
+        f"{where} ORDER BY c.id",
+        params,
+    ).fetchall()
 
     # Build user display name lookup
     user_names: dict[int, str] = {}
@@ -1174,25 +1206,25 @@ resolve_active_task_id = resolve_active_context_id
 switch_task = switch_context
 
 
-def list_tasks(conn, status_filter=None, user_id=None, show_all_users=False):
+def list_tasks(conn, status_filter=None, user_id=None, show_all_users=False, project_id=None):
     """List tasks (was list_contexts), with optional status and user filter."""
-    contexts = list_contexts(conn, user_id=user_id, show_all_users=show_all_users)
+    contexts = list_contexts(conn, user_id=user_id, show_all_users=show_all_users, project_id=project_id)
     if status_filter:
         contexts = [c for c in contexts if c.get("status", "active") == status_filter]
     return contexts
 
 
-def create_task(conn, name, description_md=None, steps=None, set_active=False, user_id=None, **kw):
+def create_task(conn, name, description_md=None, steps=None, set_active=False, user_id=None, project_id=None, **kw):
     """Create a task (was context). Maps steps→tasks for create_context."""
     return create_context(
         conn, name=name, description_md=description_md,
-        tasks=steps, set_active=set_active, user_id=user_id, **kw
+        tasks=steps, set_active=set_active, user_id=user_id, project_id=project_id, **kw
     )
 
 
-def archive_context(conn, name: str, user_id: int | None = None) -> None:
+def archive_context(conn, name: str, user_id: int | None = None, project_id: int | None = None) -> None:
     """Archive a context by name. Refuses to archive the active context."""
-    context_id = resolve_context_id(conn, name)
+    context_id = resolve_context_id(conn, name, project_id=project_id)
     if user_id is not None:
         active_id = db.get_active_context_id_for_user(conn, user_id)
     else:

@@ -21,7 +21,16 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-LATEST_SCHEMA_VERSION = 6
+LATEST_SCHEMA_VERSION = 7
+
+
+# ── Central DB path ──
+
+def default_db_path() -> Path:
+    """Return the central DB path (~/.config/plan/plan.db)."""
+    config_dir = Path.home() / ".config" / "plan"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / "plan.db"
 
 
 def apply_schema_patches(conn: sqlite3.Connection, current_version: int) -> int:
@@ -39,7 +48,10 @@ def apply_schema_patches(conn: sqlite3.Connection, current_version: int) -> int:
     for version, path in sorted(patches):
         if version <= current_version:
             continue
+        # Disable FK checks for migrations that recreate tables.
+        conn.execute("PRAGMA foreign_keys = OFF")
         conn.executescript(path.read_text(encoding="utf-8"))
+        conn.execute("PRAGMA foreign_keys = ON")
         set_schema_version(conn, version)
         current_version = version
 
@@ -92,10 +104,13 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     version = get_schema_version(conn)
     if version is None:
         # If this is a fresh DB with latest schema, set directly.
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
-        if "is_deleted" in columns:
+        ctx_columns = {row["name"] for row in conn.execute("PRAGMA table_info(contexts)").fetchall()}
+        if "project_id" in ctx_columns:
             set_schema_version(conn, LATEST_SCHEMA_VERSION)
             version = LATEST_SCHEMA_VERSION
+        elif "is_deleted" in columns:
+            set_schema_version(conn, 6)
+            version = 6
         else:
             # Assume legacy DB; start at version 1 and apply patches.
             set_schema_version(conn, 1)
@@ -103,6 +118,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
     if version < LATEST_SCHEMA_VERSION:
         version = apply_schema_patches(conn, version)
+
+    # Post-patch indexes (safe to run after project_id column exists).
+    ctx_columns = {row["name"] for row in conn.execute("PRAGMA table_info(contexts)").fetchall()}
+    if "project_id" in ctx_columns:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_contexts_project ON contexts(project_id);")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_contexts_project_name ON contexts(project_id, name);")
 
     # Backfill missing task numbers per context in id order.
     conn.execute(
@@ -135,7 +156,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "SELECT active_context_id FROM global_state WHERE id = 1"
         ).fetchone()
         if gs and gs["active_context_id"]:
-            upsert_user_state(conn, user_id, gs["active_context_id"])
+            # Get project_id from the context to scope user_state correctly.
+            ctx_row = conn.execute(
+                "SELECT project_id FROM contexts WHERE id = ?",
+                (gs["active_context_id"],),
+            ).fetchone()
+            project_id = ctx_row["project_id"] if ctx_row and ctx_row["project_id"] else None
+            if project_id:
+                upsert_user_state(conn, user_id, project_id, gs["active_context_id"])
 
 
 def upsert_global_state(conn: sqlite3.Connection, context_id: Optional[int]) -> None:
@@ -203,20 +231,55 @@ def get_user_display(conn: sqlite3.Connection, user_id: int) -> str:
     return row["display_name"] or row["name"]
 
 
-def upsert_user_state(conn: sqlite3.Connection, user_id: int, context_id: Optional[int]) -> None:
-    """Set the active context for a user."""
+def upsert_user_state(conn: sqlite3.Connection, user_id: int, project_id: int, context_id: Optional[int]) -> None:
+    """Set the active context for a user within a project."""
     conn.execute(
-        "INSERT OR REPLACE INTO user_state (user_id, active_context_id, updated_at) VALUES (?, ?, ?)",
-        (user_id, context_id, utc_now_iso()),
+        "INSERT OR REPLACE INTO user_state (user_id, project_id, active_context_id, updated_at) "
+        "VALUES (?, ?, ?, ?)",
+        (user_id, project_id, context_id, utc_now_iso()),
     )
 
 
-def get_active_context_id_for_user(conn: sqlite3.Connection, user_id: int) -> Optional[int]:
-    """Get the active context for a specific user."""
-    row = conn.execute(
-        "SELECT active_context_id FROM user_state WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()
+def get_active_context_id_for_user(conn: sqlite3.Connection, user_id: int, project_id: int | None = None) -> Optional[int]:
+    """Get the active context for a user, optionally scoped to a project."""
+    if project_id is not None:
+        row = conn.execute(
+            "SELECT active_context_id FROM user_state WHERE user_id = ? AND project_id = ?",
+            (user_id, project_id),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT active_context_id FROM user_state WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
     if not row:
         return None
     return row["active_context_id"]
+
+
+# ── Project helpers ──
+
+def get_or_create_project(conn: sqlite3.Connection, absolute_path: str, project_name: str | None = None) -> int:
+    """Return project id, creating the row if it doesn't exist."""
+    row = conn.execute(
+        "SELECT id FROM project WHERE absolute_path = ?",
+        (absolute_path,),
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    name = project_name or Path(absolute_path).name or "unnamed"
+    cur = conn.execute(
+        "INSERT INTO project (project_name, absolute_path, description_md, created_at) "
+        "VALUES (?, ?, NULL, ?)",
+        (name, absolute_path, utc_now_iso()),
+    )
+    return int(cur.lastrowid)
+
+
+def get_project_by_id(conn: sqlite3.Connection, project_id: int) -> Optional[dict]:
+    """Return project dict or None."""
+    row = conn.execute(
+        "SELECT id, project_name, absolute_path, description_md, created_at FROM project WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    return dict(row) if row else None

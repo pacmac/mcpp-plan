@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-DB_NAME = ".state"
-LEGACY_DB_NAMES = ["plan.db", "agent.db"]
+DB_NAME = ".state"  # legacy, no longer used
+LEGACY_DB_NAMES = ["plan.db", "agent.db"]  # legacy, no longer used
 
 _project_nudge_sent = False
 
@@ -140,16 +140,14 @@ def get_info(context: dict[str, Any] | None = None) -> dict[str, Any]:
     existing_tasks: list[str] = []
 
     if workspace_dir:
-        db_path = _find_db_path(Path(workspace_dir))
-        if db_path.exists():
-            try:
-                result = _run_plan_cmd(workspace_dir, ["task", "list", "--json"])
-                if result.get("success"):
-                    data = result.get("result", {})
-                    tasks = data.get("tasks", [])
-                    existing_tasks = [t.get("name") for t in tasks if t.get("name")]
-            except Exception:
-                pass
+        try:
+            result = _run_plan_cmd(workspace_dir, ["task", "list", "--json"])
+            if result.get("success"):
+                data = result.get("result", {})
+                tasks = data.get("tasks", [])
+                existing_tasks = [t.get("name") for t in tasks if t.get("name")]
+        except Exception:
+            pass
 
     return {
         "params": {
@@ -157,7 +155,7 @@ def get_info(context: dict[str, Any] | None = None) -> dict[str, Any]:
             "number": {"values": None, "default": None}
         },
         "existing_tasks": existing_tasks,
-        "database_file": f"{DB_NAME} (workspace-local, legacy fallbacks: {', '.join(LEGACY_DB_NAMES)})",
+        "database_file": "~/.config/plan/plan.db (central, shared across projects)",
         "tip": "Ask 'what am I working on?' to see current state"
     }
 
@@ -196,16 +194,17 @@ def _load_agentmod(pkg_path: Path):
 
 
 def _open_db(plan_db_mod, plan_ctx, workspace_dir: Path):
-    """Connect to DB, ensure schema, ensure project row, resolve OS user.
+    """Connect to central DB, ensure schema, resolve project and user.
 
-    Returns (conn, project_dict, is_new_project, user_id).
+    Returns (conn, project_dict, is_new_project, user_id, project_id).
     """
-    db_path = _find_db_path(workspace_dir)
+    db_path = plan_db_mod.default_db_path()
     conn = plan_db_mod.connect(db_path)
     plan_db_mod.ensure_schema(conn)
     project, is_new = plan_ctx.ensure_project(conn, str(workspace_dir))
     user_id = plan_db_mod.get_or_create_user(conn, plan_db_mod.get_os_user())
-    return conn, project, is_new, user_id
+    project_id = project["id"]
+    return conn, project, is_new, user_id, project_id
 
 
 def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, Any]:
@@ -243,7 +242,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                     if not name:
                         return {"success": False, "error": "task name required"}
 
-                    conn, _project, _is_new, _user_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
+                    conn, _project, _is_new, _user_id, _project_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
 
                     # Parse kwargs from flattened args
                     title = None
@@ -269,13 +268,14 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         steps=steps_list,
                         set_active=True,
                         user_id=_user_id,
+                        project_id=_project_id,
                     )
                     result = plan_ctx.get_task_show(conn, task_id)
                     conn.close()
                     return {"success": True, "result": result}
 
                 elif action == "list":
-                    conn, _project, _is_new, _user_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
+                    conn, _project, _is_new, _user_id, _project_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
                     status_filter = None
                     show_all_users = False
                     i = 2
@@ -291,20 +291,21 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                     tasks = plan_ctx.list_tasks(
                         conn, status_filter=status_filter,
                         user_id=_user_id, show_all_users=show_all_users,
+                        project_id=_project_id,
                     )
                     conn.close()
                     return {"success": True, "result": {"tasks": tasks}}
 
                 else:
-                    conn, _project, _is_new, _user_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
+                    conn, _project, _is_new, _user_id, _project_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
 
                     if action == "archive":
                         name = cmd_args[2] if len(cmd_args) > 2 else None
                         if not name:
                             conn.close()
                             return {"success": False, "error": "task name required"}
-                        plan_ctx.archive_task(conn, name, user_id=_user_id)
-                        tasks = plan_ctx.list_tasks(conn, status_filter="active", user_id=_user_id)
+                        plan_ctx.archive_task(conn, name, user_id=_user_id, project_id=_project_id)
+                        tasks = plan_ctx.list_tasks(conn, status_filter="active", user_id=_user_id, project_id=_project_id)
                         conn.close()
                         return {"success": True, "result": {"archived": name, "tasks": tasks}}
 
@@ -313,7 +314,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         if not name:
                             conn.close()
                             return {"success": False, "error": "task name required"}
-                        plan_ctx.switch_task(conn, name, user_id=_user_id)
+                        plan_ctx.switch_task(conn, name, user_id=_user_id, project_id=_project_id)
                         result = plan_ctx.get_task_status(conn, user_id=_user_id)
                         conn.close()
                         return {"success": True, "result": result}
@@ -321,9 +322,9 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                     elif action == "show":
                         name = cmd_args[2] if len(cmd_args) > 2 and not cmd_args[2].startswith("--") else None
                         if name:
-                            task_id = plan_ctx.resolve_task_id(conn, name)
+                            task_id = plan_ctx.resolve_task_id(conn, name, project_id=_project_id)
                         else:
-                            task_id = plan_ctx.resolve_active_task_id(conn, user_id=_user_id)
+                            task_id = plan_ctx.resolve_active_task_id(conn, user_id=_user_id, project_id=_project_id)
                         result = plan_ctx.get_task_show(conn, task_id)
                         conn.close()
                         return {"success": True, "result": result}
@@ -360,7 +361,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                     conn.close()
 
             elif command == "step":
-                conn, _project, _is_new, _user_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
+                conn, _project, _is_new, _user_id, _project_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
 
                 try:
                     if action == "list":
@@ -451,7 +452,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                     conn.close()
 
             elif command == "project":
-                conn, project, is_new, _user_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
+                conn, project, is_new, _user_id, _project_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
                 try:
                     if action == "show":
                         return {"success": True, "result": project or {}}
@@ -469,7 +470,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                                 i += 2
                             else:
                                 i += 1
-                        result = plan_ctx.set_project(conn, project_name=name, description_md=description)
+                        result = plan_ctx.set_project(conn, project_id=_project_id, project_name=name, description_md=description)
                         return {"success": True, "result": result}
                 finally:
                     conn.close()
@@ -539,7 +540,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         try:
             pkg_path = _agentmod_path()
             plan_db_mod, plan_ctx = _load_agentmod(pkg_path)
-            conn, project, _is_new, _user_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+            conn, project, _is_new, _user_id, _proj_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
             conn.close()
 
             # Inject project name into all result dicts
@@ -765,11 +766,12 @@ def _cmd_user_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         del sys.modules[stale]
     pkg_path = _agentmod_path()
     plan_db_mod, plan_ctx = _load_agentmod(pkg_path)
-    conn, _project, _is_new, user_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    conn, _project, _is_new, user_id, _project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
     user = plan_db_mod.get_user(conn, user_id)
     conn.close()
     if not user:
         return {"success": False, "error": "User not found"}
+    user["project_name"] = _project.get("project_name") if _project else None
     return _with_display({"success": True, "result": user}, _fmt_user(user))
 
 
@@ -782,7 +784,7 @@ def _cmd_user_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         del sys.modules[stale]
     pkg_path = _agentmod_path()
     plan_db_mod, plan_ctx = _load_agentmod(pkg_path)
-    conn, _project, _is_new, user_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    conn, _project, _is_new, user_id, _project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
     user = plan_db_mod.set_user_display_name(conn, user_id, alias)
     conn.close()
     return _with_display({"success": True, "result": user}, _fmt_user(user))
