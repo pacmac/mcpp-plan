@@ -1,2 +1,3 @@
 workflow:
+  allow_reopen_completed: false
   require_goal_and_plan: true

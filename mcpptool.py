@@ -845,7 +845,7 @@ def _cmd_project_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
 
 def _cmd_config_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """Show current config (merged defaults + file overrides)."""
-    from config import get_config, DEFAULTS, config_path
+    from mcpp_plan.config import get_config, DEFAULTS, config_path
     cfg = get_config()
     lines = ["**Configuration**", f"File: `{config_path()}`"]
     for section, keys in cfg.items():
@@ -870,7 +870,7 @@ def _cmd_config_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"success": False, "error": "key is required"}
     if value is None:
         return {"success": False, "error": "value is required"}
-    from config import set_config
+    from mcpp_plan.config import set_config
     cfg = set_config(section, key, value)
     return {"success": True, "result": cfg, "display": f"Set **{section}.{key}** = `{value}`"}
 
