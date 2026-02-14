@@ -67,11 +67,12 @@ def _fmt_task_list(tasks: list[dict], grouped: bool = False) -> str:
     if not grouped:
         lines = ["**Tasks**"]
         for t in tasks:
+            tid = t.get("id", "?")
             active = " (active)" if t.get("is_active") else ""
             status = t.get("status", "active")
             if status == "archived":
                 active = " [archived]"
-            lines.append(f"- {t['name']}: {t.get('title', t['name'])}{active}")
+            lines.append(f"- [{tid}] {t['name']}: {t.get('title', t['name'])}{active}")
         return "\n".join(lines)
 
     # Grouped by user
@@ -85,11 +86,12 @@ def _fmt_task_list(tasks: list[dict], grouped: bool = False) -> str:
         count = len(user_tasks)
         lines.append(f"\n**{user}** ({count} task{'s' if count != 1 else ''})")
         for t in user_tasks:
+            tid = t.get("id", "?")
             active = " (active)" if t.get("is_active") else ""
             status = t.get("status", "active")
             if status == "archived":
                 active = " [archived]"
-            lines.append(f"- {t['name']}: {t.get('title', t['name'])}{active}")
+            lines.append(f"- [{tid}] {t['name']}: {t.get('title', t['name'])}{active}")
     return "\n".join(lines)
 
 
