@@ -2,6 +2,8 @@
 
 A persistent task and step tracker for AI coding agents. Gives Claude Code (or any MCP-compatible agent) the ability to break work into tasks, track steps within each task, and remember exactly where it left off across sessions.
 
+> **Dogfooded daily.** This module is developed, maintained, and continuously improved using itself. Every feature gets real-world testing the moment it's built.
+
 ## Why
 
 AI agents lose context between sessions. When you resume a conversation, the agent doesn't know what it was doing, which steps are done, or what's next. mcpp-plan solves this by giving agents a structured, persistent task manager backed by SQLite.
