@@ -21,7 +21,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 8
 
 
 # ── Central DB path ──
@@ -185,9 +185,9 @@ def get_active_context_id(conn: sqlite3.Connection) -> Optional[int]:
 # ── User helpers ──
 
 def get_os_user() -> str:
-    """Return the current OS login name."""
+    """Return the current OS login name, normalised to lowercase."""
     import os
-    return os.environ.get("USER") or os.environ.get("USERNAME") or "default"
+    return (os.environ.get("USER") or os.environ.get("USERNAME") or "default").lower()
 
 
 def get_or_create_user(conn: sqlite3.Connection, name: str) -> int:
