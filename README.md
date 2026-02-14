@@ -211,6 +211,10 @@ schema_patches/    Incremental migrations (patch-4.sql through patch-7.sql)
 5. `context.py` runs the operation in a transaction
 6. Result dict is returned with structured data and a `display` string for the user
 
+## Inspired By
+
+This project was inspired by [Andreas Wenk](https://www.youtube.com/watch?v=5DG0-_lseR4) and his work on MCP server architecture.
+
 ## License
 
 [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
