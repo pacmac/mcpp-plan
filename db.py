@@ -139,11 +139,69 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             version = 1
 
     if version < LATEST_SCHEMA_VERSION:
-        # Backup before applying migrations
         db_path = Path(conn.execute("PRAGMA database_list").fetchone()["file"])
         if db_path.exists():
-            backup_db(db_path)
-        version = apply_schema_patches(conn, version)
+            from .backup import (
+                create_verified_backup, table_row_counts,
+                validate_row_counts, MigrationAborted,
+                _apply_patches_to,
+            )
+            patches_dir = Path(__file__).resolve().parent / "schema_patches"
+
+            try:
+                # Step 1: Verified backup.
+                backup_path = create_verified_backup(db_path)
+
+                # Step 2: Snapshot pre-migration row counts.
+                pre_counts = table_row_counts(conn)
+
+                # Steps 3-5: Trial migration on a temporary copy.
+                import tempfile, os as _os
+                tmp_fd, tmp_name = tempfile.mkstemp(suffix=".db", prefix="plan_migrate_")
+                tmp_path = Path(tmp_name)
+                _os.close(tmp_fd)
+                try:
+                    shutil.copy2(db_path, tmp_path)
+                    tmp_conn = sqlite3.connect(tmp_path, isolation_level=None)
+                    tmp_conn.row_factory = sqlite3.Row
+                    try:
+                        try:
+                            _apply_patches_to(tmp_conn, version, LATEST_SCHEMA_VERSION, patches_dir)
+                        except sqlite3.Error as sql_err:
+                            raise MigrationAborted(
+                                f"Trial migration FAILED — SQL error: {sql_err}. "
+                                f"Live database NOT touched.  Backup at: {backup_path}"
+                            ) from sql_err
+                        trial_counts = table_row_counts(tmp_conn)
+                    finally:
+                        tmp_conn.close()
+
+                    trial_errors = validate_row_counts(pre_counts, trial_counts)
+                    if trial_errors:
+                        detail = "; ".join(trial_errors)
+                        raise MigrationAborted(
+                            f"Trial migration FAILED — data loss detected: {detail}. "
+                            f"Live database NOT touched.  Backup at: {backup_path}"
+                        )
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+
+                # Step 6: Apply patches to the live DB.
+                version = apply_schema_patches(conn, version)
+
+                # Step 7: Validate live DB after migration.
+                post_counts = table_row_counts(conn)
+                live_errors = validate_row_counts(pre_counts, post_counts)
+                if live_errors:
+                    detail = "; ".join(live_errors)
+                    raise MigrationAborted(
+                        f"Live migration validation FAILED: {detail}. "
+                        f"Backup available at: {backup_path}"
+                    )
+            except MigrationAborted as exc:
+                raise RuntimeError(f"Schema migration aborted: {exc}") from exc
+        else:
+            version = apply_schema_patches(conn, version)
 
     # Post-patch indexes (safe to run after project_id column exists).
     ctx_columns = {row["name"] for row in conn.execute("PRAGMA table_info(contexts)").fetchall()}
