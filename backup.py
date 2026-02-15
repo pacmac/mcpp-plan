@@ -12,11 +12,12 @@ untouched.
 from __future__ import annotations
 
 import hashlib
+import re as _re_module
 import shutil
 import sqlite3
 import string
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -93,6 +94,63 @@ def create_verified_backup(db_path: Path) -> Path:
         )
 
     return backup_path
+
+
+# ── Daily auto-backup ────────────────────────────────────────────
+
+def ensure_daily_backup(db_path: Path, enabled: bool = True) -> Optional[Path]:
+    """Create one backup per day if none exists yet for today.
+
+    Returns the backup path if a new backup was created, or None if
+    skipped (already exists or disabled).
+    """
+    if not enabled:
+        return None
+
+    if not db_path.exists():
+        return None
+
+    backup_dir = db_path.parent / ".backups"
+    date_str = datetime.now().strftime("%y%m%d")
+    pattern = f"{db_path.name}.{date_str}*"
+
+    if backup_dir.exists() and list(backup_dir.glob(pattern)):
+        return None  # today's backup already exists
+
+    return create_verified_backup(db_path)
+
+
+def prune_old_backups(db_path: Path, retain_days: int = 7) -> list[Path]:
+    """Delete backups older than *retain_days*.
+
+    Scans `.backups/` for files matching `plan.db.YYMMDD[a-z]`,
+    parses the date, and removes any that are too old.
+
+    Returns the list of deleted paths.
+    """
+    backup_dir = db_path.parent / ".backups"
+    if not backup_dir.exists():
+        return []
+
+    cutoff = datetime.now() - timedelta(days=retain_days)
+    deleted: list[Path] = []
+    pattern = _re_module.compile(
+        r"^" + _re_module.escape(db_path.name) + r"\.(\d{6})[a-z]$"
+    )
+
+    for entry in backup_dir.iterdir():
+        m = pattern.match(entry.name)
+        if not m:
+            continue
+        try:
+            file_date = datetime.strptime(m.group(1), "%y%m%d")
+        except ValueError:
+            continue
+        if file_date < cutoff:
+            entry.unlink(missing_ok=True)
+            deleted.append(entry)
+
+    return deleted
 
 
 # ── Trial migration on a copy ────────────────────────────────────

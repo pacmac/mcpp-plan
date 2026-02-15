@@ -209,6 +209,8 @@ Global settings live in `config.yaml` in the module directory (alongside `plan.d
 workflow:
   require_goal_and_plan: true      # require goal and plan notes before step progress
   allow_reopen_completed: false    # allow switching to completed tasks (reopens them)
+  daily_backup: true               # create one backup per day on first use
+  backup_retain_days: 7            # delete backups older than this many days
 ```
 
 ### Defaults
@@ -217,6 +219,8 @@ workflow:
 |---------|-----|---------|-------------|
 | `workflow` | `require_goal_and_plan` | `true` | Require goal and plan notes before step progress |
 | `workflow` | `allow_reopen_completed` | `false` | Allow switching to completed tasks (sets them back to active) |
+| `workflow` | `daily_backup` | `true` | Create one backup per day on first use |
+| `workflow` | `backup_retain_days` | `7` | Delete backups older than this many days |
 
 ### Behavior
 
@@ -241,7 +245,7 @@ Schema migrations are protected by a multi-layer safety pipeline (`backup.py`):
 
 If anything fails at any step, the migration aborts with a clear error message and the path to the backup file. The live database is left untouched.
 
-Backups use letter suffixes (`a`-`z`) for multiple backups on the same day. They are only created when patches are actually being applied, not on every startup.
+Backups use letter suffixes (`a`-`z`) for multiple backups on the same day. Migration backups are created when patches are applied. Additionally, a daily auto-backup runs on first use each day (configurable via `daily_backup`), with automatic pruning of backups older than `backup_retain_days`.
 
 ## Hints & Tips
 

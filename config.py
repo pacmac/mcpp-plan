@@ -14,6 +14,8 @@ DEFAULTS: dict[str, Any] = {
     "workflow": {
         "require_goal_and_plan": True,
         "allow_reopen_completed": False,
+        "daily_backup": True,
+        "backup_retain_days": 7,
     },
 }
 

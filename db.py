@@ -255,6 +255,18 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     if "kind" in cn_columns:
         _backfill_goal_plan_notes(conn)
 
+    # Daily auto-backup with retention pruning.
+    from .backup import ensure_daily_backup, prune_old_backups
+    from .config import get_config
+    cfg = get_config()
+    wf = cfg.get("workflow", {})
+    if wf.get("daily_backup", True):
+        db_path = Path(conn.execute("PRAGMA database_list").fetchone()["file"])
+        if db_path.exists():
+            result = ensure_daily_backup(db_path)
+            if result:  # new backup was created
+                prune_old_backups(db_path, wf.get("backup_retain_days", 7))
+
 
 def _backfill_goal_plan_notes(conn: sqlite3.Connection) -> None:
     """Parse notes with ## Goal / ## Plan headers, split into typed rows, remove placeholders."""

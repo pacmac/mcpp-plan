@@ -473,6 +473,79 @@ def test_backup_missing_db():
         report("raises on missing DB", "does not exist" in str(exc))
 
 
+def test_ensure_daily_backup():
+    """Test that ensure_daily_backup creates one backup per day and skips on repeat."""
+    print("\n== ensure_daily_backup ==")
+    tmp_dir = Path(tempfile.mkdtemp())
+    db_path = tmp_dir / "plan.db"
+    try:
+        make_test_db(db_path)
+
+        # First call — should create a backup.
+        result = backup.ensure_daily_backup(db_path)
+        report("creates backup on first call", result is not None and result.exists())
+
+        # Second call — should skip (today's backup already exists).
+        result2 = backup.ensure_daily_backup(db_path)
+        report("skips on second call", result2 is None)
+
+        # Verify only one backup file exists.
+        backups = list((tmp_dir / ".backups").glob("plan.db.*"))
+        report("exactly one backup", len(backups) == 1)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_ensure_daily_backup_disabled():
+    """Test that ensure_daily_backup respects enabled=False."""
+    print("\n== ensure_daily_backup (disabled) ==")
+    tmp_dir = Path(tempfile.mkdtemp())
+    db_path = tmp_dir / "plan.db"
+    try:
+        make_test_db(db_path)
+        result = backup.ensure_daily_backup(db_path, enabled=False)
+        report("returns None when disabled", result is None)
+        report("no .backups dir created", not (tmp_dir / ".backups").exists())
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_prune_old_backups():
+    """Test that prune_old_backups deletes old backups and keeps recent ones."""
+    print("\n== prune_old_backups ==")
+    tmp_dir = Path(tempfile.mkdtemp())
+    db_path = tmp_dir / "plan.db"
+    try:
+        make_test_db(db_path)
+        backup_dir = tmp_dir / ".backups"
+        backup_dir.mkdir()
+
+        from datetime import datetime, timedelta
+
+        # Create backups with various ages.
+        today = datetime.now()
+        old_date = (today - timedelta(days=10)).strftime("%y%m%d")
+        recent_date = (today - timedelta(days=3)).strftime("%y%m%d")
+        today_date = today.strftime("%y%m%d")
+
+        old_file = backup_dir / f"plan.db.{old_date}a"
+        recent_file = backup_dir / f"plan.db.{recent_date}a"
+        today_file = backup_dir / f"plan.db.{today_date}a"
+
+        old_file.write_text("old")
+        recent_file.write_text("recent")
+        today_file.write_text("today")
+
+        deleted = backup.prune_old_backups(db_path, retain_days=7)
+        report("deleted old backup", old_file in deleted)
+        report("old file removed", not old_file.exists())
+        report("recent file kept", recent_file.exists())
+        report("today file kept", today_file.exists())
+        report("only one deleted", len(deleted) == 1)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def test_ensure_schema_integration():
     """Test that db.py's ensure_schema uses the safety pipeline.
 
@@ -565,6 +638,9 @@ def main():
     test_safe_migrate_catches_sql_error()
     test_safe_migrate_nondestructive()
     test_backup_missing_db()
+    test_ensure_daily_backup()
+    test_ensure_daily_backup_disabled()
+    test_prune_old_backups()
     test_ensure_schema_integration()
 
     print(f"\n{'='*50}")
