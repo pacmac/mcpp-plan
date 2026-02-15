@@ -221,6 +221,10 @@ workflow:
 - `plan_config_show` -- show current settings (merged defaults + overrides)
 - `plan_config_set` -- set a value: requires `section`, `key`, and `value` parameters
 
+## Backups
+
+Before applying schema migrations, `plan.db` is automatically backed up to `.backups/plan.db.YYMMDDx` (where `x` is a letter suffix `a`-`z` for multiple backups on the same day). Backups are only created when patches are actually being applied, not on every startup.
+
 ## Hints & Tips
 
 **Orient the agent on a new project.** When starting work on a fresh codebase, have the agent explore it first:

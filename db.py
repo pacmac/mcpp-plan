@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import re
+import string
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -74,6 +76,28 @@ def set_schema_version(conn: sqlite3.Connection, version: int) -> None:
     )
 
 
+def backup_db(db_path: Path) -> Path:
+    """Backup plan.db to .backups/plan.db.YYMMDD[a-z].
+
+    Creates the .backups/ directory if missing. Uses a letter suffix
+    (a, b, c...) for multiple backups on the same day.
+    Returns the path of the created backup.
+    """
+    backup_dir = db_path.parent / ".backups"
+    backup_dir.mkdir(exist_ok=True)
+
+    date_str = datetime.now().strftime("%y%m%d")
+    base = f"{db_path.name}.{date_str}"
+
+    for letter in string.ascii_lowercase:
+        candidate = backup_dir / f"{base}{letter}"
+        if not candidate.exists():
+            shutil.copy2(db_path, candidate)
+            return candidate
+
+    raise RuntimeError(f"Exhausted backup slots for {base}[a-z]")
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     schema_path = Path(__file__).resolve().parent / "schema.sql"
     conn.executescript(schema_path.read_text(encoding="utf-8"))
@@ -115,6 +139,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             version = 1
 
     if version < LATEST_SCHEMA_VERSION:
+        # Backup before applying migrations
+        db_path = Path(conn.execute("PRAGMA database_list").fetchone()["file"])
+        if db_path.exists():
+            backup_db(db_path)
         version = apply_schema_patches(conn, version)
 
     # Post-patch indexes (safe to run after project_id column exists).
