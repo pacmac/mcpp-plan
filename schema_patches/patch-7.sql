@@ -1,7 +1,17 @@
 -- Centralize DB: multi-project support
--- Idempotent: handles partial previous runs.
+-- Safe migration: uses ALTER TABLE for contexts (no recreation needed),
+-- and verified table recreation only where SQLite requires it
+-- (constraint changes on project and user_state).
+-- Data integrity is enforced by the backup.py safety pipeline
+-- (trial-on-copy + row count validation) BEFORE this runs on the live DB.
 
--- 1. Recreate project table without singleton constraint (if needed)
+-- 1. Add project_id to contexts (no table recreation needed).
+ALTER TABLE contexts ADD COLUMN project_id INTEGER REFERENCES project(id);
+UPDATE contexts SET project_id = 1 WHERE project_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_contexts_user ON contexts(user_id);
+
+-- 2. Recreate project table without singleton CHECK constraint.
+--    SQLite cannot alter constraints, so recreation is required.
 CREATE TABLE IF NOT EXISTS project_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_name TEXT NOT NULL,
@@ -10,35 +20,15 @@ CREATE TABLE IF NOT EXISTS project_new (
     created_at TEXT NOT NULL
 );
 
-INSERT OR IGNORE INTO project_new (id, project_name, absolute_path, description_md, created_at)
-    SELECT id, project_name, absolute_path, description_md, created_at FROM project;
+INSERT INTO project_new (id, project_name, absolute_path, description_md, created_at)
+    SELECT id, project_name, absolute_path, description_md, created_at FROM project
+    WHERE TRUE
+    ON CONFLICT(id) DO NOTHING;
 
-DROP TABLE IF EXISTS project;
+DROP TABLE project;
 ALTER TABLE project_new RENAME TO project;
 
--- 2. Add project_id to contexts if not present
--- (Recreating is safest to drop the UNIQUE constraint on name)
-CREATE TABLE IF NOT EXISTS contexts_new (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
-    description_md TEXT,
-    user_id INTEGER REFERENCES users(id),
-    project_id INTEGER REFERENCES project(id),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-INSERT OR IGNORE INTO contexts_new (id, name, status, description_md, user_id, project_id, created_at, updated_at)
-    SELECT id, name, status, description_md, user_id, COALESCE(project_id, 1), created_at, updated_at FROM contexts;
-
--- FK checks disabled by apply_schema_patches() in Python.
-DROP TABLE IF EXISTS contexts;
-ALTER TABLE contexts_new RENAME TO contexts;
-
-CREATE INDEX IF NOT EXISTS idx_contexts_user ON contexts(user_id);
-
--- 3. Recreate user_state as per-user-per-project
+-- 3. Recreate user_state as per-user-per-project composite PK.
 CREATE TABLE IF NOT EXISTS user_state_new (
     user_id INTEGER NOT NULL,
     project_id INTEGER NOT NULL,
@@ -50,8 +40,10 @@ CREATE TABLE IF NOT EXISTS user_state_new (
     FOREIGN KEY (active_context_id) REFERENCES contexts(id)
 );
 
-INSERT OR IGNORE INTO user_state_new (user_id, project_id, active_context_id, updated_at)
-    SELECT user_id, 1, active_context_id, updated_at FROM user_state;
+INSERT INTO user_state_new (user_id, project_id, active_context_id, updated_at)
+    SELECT user_id, 1, active_context_id, updated_at FROM user_state
+    WHERE TRUE
+    ON CONFLICT(user_id, project_id) DO NOTHING;
 
-DROP TABLE IF EXISTS user_state;
+DROP TABLE user_state;
 ALTER TABLE user_state_new RENAME TO user_state;

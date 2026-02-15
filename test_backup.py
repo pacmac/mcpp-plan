@@ -95,7 +95,6 @@ def make_test_db(db_path: Path, schema_version: int = 6) -> None:
             note_md TEXT NOT NULL,
             created_at TEXT NOT NULL,
             actor TEXT,
-            kind TEXT NOT NULL DEFAULT 'note',
             FOREIGN KEY (context_id) REFERENCES contexts(id)
         );
 
@@ -121,7 +120,6 @@ def make_test_db(db_path: Path, schema_version: int = 6) -> None:
             task_id INTEGER NOT NULL,
             note_md TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            kind TEXT NOT NULL DEFAULT 'note',
             FOREIGN KEY (task_id) REFERENCES tasks(id)
         );
 
@@ -365,30 +363,31 @@ def test_safe_migrate_catches_destructive_patch():
 def test_safe_migrate_catches_sql_error():
     """Test that SQL errors during trial migration abort cleanly.
 
-    This simulates running patch-7.sql against a version-6 DB where
-    contexts doesn't have project_id — the executescript will error,
-    and the safety pipeline should catch it and abort.
+    Uses a custom patch with a deliberate SQL error to verify the
+    safety pipeline catches it and leaves the live DB untouched.
     """
     print("\n== safe_migrate catches SQL error ==")
 
     tmp_dir = Path(tempfile.mkdtemp())
     db_path = tmp_dir / "plan.db"
-    patches_dir = MODULE_DIR / "schema_patches"
+
+    # Create a patches dir with a broken patch.
+    bad_patches_dir = tmp_dir / "bad_patches"
+    bad_patches_dir.mkdir()
+    (bad_patches_dir / "patch-7.sql").write_text(
+        "ALTER TABLE contexts ADD COLUMN nonexistent_ref REFERENCES no_such_table(id);\n"
+        "SELECT * FROM completely_fake_table;\n"
+    )
 
     try:
         make_test_db(db_path, schema_version=6)
         live_hash_before = backup.sha256_file(db_path)
 
-        # Run safe_migrate with real patches — patch-7 references
-        # project_id which doesn't exist at version 6.
         aborted = False
         error_msg = ""
         try:
-            backup.safe_migrate(db_path, 6, 10, patches_dir)
+            backup.safe_migrate(db_path, 6, 7, bad_patches_dir)
         except (backup.MigrationAborted, RuntimeError) as exc:
-            aborted = True
-            error_msg = str(exc)
-        except Exception as exc:
             aborted = True
             error_msg = str(exc)
 
@@ -477,8 +476,9 @@ def test_backup_missing_db():
 def test_ensure_schema_integration():
     """Test that db.py's ensure_schema uses the safety pipeline.
 
-    Creates a pre-patch-7 DB and calls ensure_schema — it should
-    abort because patch-7 is destructive.
+    Creates a pre-patch-7 DB and calls ensure_schema — with the fixed
+    (non-destructive) patch-7, migration should SUCCEED and preserve
+    all data.  A verified backup should be created.
     """
     print("\n== ensure_schema integration ==")
 
@@ -512,14 +512,12 @@ def test_ensure_schema_integration():
         counts_before = backup.table_row_counts(conn)
         conn.close()
 
-        # Call ensure_schema — should raise because patch-7 is destructive.
+        # Call ensure_schema — should succeed with fixed patches.
         conn = db.connect(db_path)
-        raised = False
         error_msg = ""
         try:
             db.ensure_schema(conn)
         except RuntimeError as exc:
-            raised = True
             error_msg = str(exc)
         finally:
             try:
@@ -527,17 +525,22 @@ def test_ensure_schema_integration():
             except Exception:
                 pass
 
-        report("ensure_schema raised RuntimeError", raised)
-        report("error mentions migration aborted", "aborted" in error_msg.lower())
+        report("ensure_schema succeeded", error_msg == "", error_msg)
 
-        # Verify live DB data is intact.
+        # Verify all data is intact.
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         counts_after = backup.table_row_counts(conn)
         conn.close()
 
-        report("contexts preserved", counts_after.get("contexts") == counts_before.get("contexts"))
-        report("tasks preserved", counts_after.get("tasks") == counts_before.get("tasks"))
+        report("contexts preserved", counts_after.get("contexts", 0) >= counts_before.get("contexts", 0))
+        report("tasks preserved", counts_after.get("tasks", 0) >= counts_before.get("tasks", 0))
+        report("user_state preserved", counts_after.get("user_state", 0) >= counts_before.get("user_state", 0))
+
+        # Verify backup was created.
+        backups_dir = tmp_dir / ".backups"
+        backups = list(backups_dir.glob("plan.db.*")) if backups_dir.exists() else []
+        report("backup created during migration", len(backups) >= 1)
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

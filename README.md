@@ -230,9 +230,18 @@ workflow:
 - `plan_config_show` -- show current settings (merged defaults + overrides)
 - `plan_config_set` -- set a value: requires `section`, `key`, and `value` parameters
 
-## Backups
+## Migration safety
 
-Before applying schema migrations, `plan.db` is automatically backed up to `.backups/plan.db.YYMMDDx` (where `x` is a letter suffix `a`-`z` for multiple backups on the same day). Backups are only created when patches are actually being applied, not on every startup.
+Schema migrations are protected by a multi-layer safety pipeline (`backup.py`):
+
+1. **Verified backup** -- `plan.db` is copied to `.backups/plan.db.YYMMDDx` and the SHA-256 checksum is verified to match the live DB before proceeding.
+2. **Trial migration on a copy** -- all patches are applied to a temporary copy of the database first. If the trial fails (SQL error or data loss), the live DB is never touched.
+3. **Row count validation** -- after the trial, every table's row count is compared to pre-migration counts. Any decrease aborts the migration.
+4. **Live migration + re-validation** -- only after the trial passes are patches applied to the live DB, followed by a second row count validation.
+
+If anything fails at any step, the migration aborts with a clear error message and the path to the backup file. The live database is left untouched.
+
+Backups use letter suffixes (`a`-`z`) for multiple backups on the same day. They are only created when patches are actually being applied, not on every startup.
 
 ## Hints & Tips
 
@@ -286,8 +295,9 @@ mcpptool.py        MCP entry point -- routes tool calls to Python API
 context.py         Business logic (create/switch/complete tasks and steps)
 config.py          Global configuration (config.yaml loading + defaults)
 db.py              SQLite connection, schema management, user/project helpers
+backup.py          Migration safety pipeline (verified backup, trial-on-copy, row validation)
 schema.sql         Base schema
-schema_patches/    Incremental migrations (patch-4.sql through patch-9.sql)
+schema_patches/    Incremental migrations (patch-4.sql through patch-10.sql)
 ```
 
 ### Entry points
