@@ -91,6 +91,15 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_project_show` | Show project metadata |
 | `plan_project_set` | Set project name and description |
 
+### Report tools
+
+| Tool | Description |
+|------|-------------|
+| `plan_project_report` | Generate a project report (.md) with all tasks, goals, plans, and steps |
+| `plan_task_report` | Generate a task report (.md) with goal, plan, steps, and notes |
+
+Reports are written to the workspace directory with date-stamped filenames (e.g. `project_report_260215.md`, `task_report_build-auth_260215.md`). Same-day files are overwritten.
+
 ### Config tools
 
 | Tool | Description |

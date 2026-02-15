@@ -536,6 +536,9 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         # Config tools
         "plan_config_show": _cmd_config_show,
         "plan_config_set": _cmd_config_set,
+        # Report tools
+        "plan_project_report": _cmd_project_report,
+        "plan_task_report": _cmd_task_report,
         # Utility
         "plan_readme": _cmd_readme,
     }
@@ -873,6 +876,203 @@ def _cmd_config_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     from mcpp_plan.config import set_config
     cfg = set_config(section, key, value)
     return {"success": True, "result": cfg, "display": f"Set **{section}.{key}** = `{value}`"}
+
+
+# ── Report command handlers ──
+
+def _fmt_project_report(data: dict) -> str:
+    """Format a project report as markdown."""
+    from datetime import datetime, timezone
+    project = data.get("project", {})
+    tasks = data.get("tasks", [])
+    cfg = data.get("config", {})
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    lines = []
+    name = project.get("project_name", "unnamed")
+    lines.append(f"# Project Report: {name}")
+    lines.append("")
+    if desc := project.get("description_md"):
+        lines.append(desc)
+        lines.append("")
+    lines.append(f"**Path**: `{project.get('absolute_path', '?')}`")
+    lines.append(f"**Generated**: {now}")
+    lines.append("")
+
+    # Config summary
+    workflow = cfg.get("workflow", {})
+    if workflow:
+        lines.append("## Configuration")
+        lines.append("")
+        for k, v in workflow.items():
+            lines.append(f"- **{k}**: `{v}`")
+        lines.append("")
+
+    # Task overview
+    lines.append("## Tasks")
+    lines.append("")
+    if not tasks:
+        lines.append("No tasks.")
+    else:
+        lines.append("| # | Task | Status | Progress |")
+        lines.append("|---|------|--------|----------|")
+        for i, t in enumerate(tasks, 1):
+            status = t.get("status", "active")
+            done = t.get("steps_done", 0)
+            total = t.get("steps_total", 0)
+            progress = f"{done}/{total}" if total > 0 else "—"
+            lines.append(f"| {i} | {t['name']} | {status} | {progress} |")
+        lines.append("")
+
+    # Per-task detail
+    for t in tasks:
+        lines.append(f"### {t['name']}")
+        if t.get("title") and t["title"] != t["name"]:
+            lines.append(f"*{t['title']}*")
+        lines.append("")
+        if goal := t.get("goal"):
+            lines.append(f"**Goal**: {goal}")
+            lines.append("")
+        if plan := t.get("plan"):
+            lines.append(f"**Plan**: {plan}")
+            lines.append("")
+        steps = t.get("steps", [])
+        if steps:
+            for s in steps:
+                if s.get("is_deleted"):
+                    continue
+                status = s["status"]
+                marker = {"planned": " ", "started": ">", "complete": "x"}.get(status, " ")
+                lines.append(f"- [{marker}] {s['task_number']}. {s['title']}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def _fmt_task_report(data: dict) -> str:
+    """Format a single task report as markdown."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    lines = []
+    name = data.get("name", "?")
+    title = data.get("title", name)
+    status = data.get("status", "?")
+
+    lines.append(f"# Task Report: {name}")
+    lines.append("")
+    if title != name:
+        lines.append(f"*{title}*")
+        lines.append("")
+    lines.append(f"**Status**: {status}")
+    lines.append(f"**Generated**: {now}")
+    lines.append("")
+
+    # Goal
+    if goals := data.get("goals"):
+        lines.append("## Goal")
+        lines.append("")
+        for g in goals:
+            lines.append(g)
+        lines.append("")
+
+    # Plan
+    if plans := data.get("plans"):
+        lines.append("## Plan")
+        lines.append("")
+        for p in plans:
+            lines.append(p)
+        lines.append("")
+
+    # Steps
+    steps = data.get("steps", [])
+    active_step = data.get("active_step")
+    if steps:
+        lines.append("## Steps")
+        lines.append("")
+        lines.append("| # | Step | Status |")
+        lines.append("|---|------|--------|")
+        for s in steps:
+            marker = " <--" if s["number"] == active_step else ""
+            lines.append(f"| {s['number']} | {s['title']} | {s['status']}{marker} |")
+        lines.append("")
+
+        # Step details (descriptions and notes)
+        for s in steps:
+            has_detail = s.get("description") or s.get("notes")
+            if not has_detail:
+                continue
+            lines.append(f"### Step {s['number']}: {s['title']}")
+            lines.append("")
+            if desc := s.get("description"):
+                lines.append(desc)
+                lines.append("")
+            if notes := s.get("notes"):
+                for n in notes:
+                    kind = n.get("kind", "note")
+                    kind_tag = f"[{kind}] " if kind != "note" else ""
+                    lines.append(f"- {kind_tag}{n['note_md']}")
+                lines.append("")
+
+    # Task-level notes
+    if notes := data.get("notes"):
+        lines.append("## Notes")
+        lines.append("")
+        for n in notes:
+            lines.append(f"- {n['note_md']}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _cmd_project_report(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Generate a project report and write it to the workspace directory."""
+    from datetime import datetime
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        data = plan_ctx.get_project_report_data(conn, user_id=user_id, project_id=project_id)
+        md = _fmt_project_report(data)
+        date_str = datetime.now().strftime("%y%m%d")
+        filename = f"project_report_{date_str}.md"
+        filepath = Path(workspace_dir) / filename
+        filepath.write_text(md, encoding="utf-8")
+        return {
+            "success": True,
+            "result": {"file": str(filepath), "content": md},
+            "display": f"Report written to `{filename}`\n\n{md}",
+        }
+    finally:
+        conn.close()
+
+
+def _cmd_task_report(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Generate a task report and write it to the workspace directory."""
+    from datetime import datetime
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        name = args.get("name")
+        data = plan_ctx.get_task_report_data(conn, context_ref=name, user_id=user_id, project_id=project_id)
+        md = _fmt_task_report(data)
+        date_str = datetime.now().strftime("%y%m%d")
+        task_name = data.get("name", "task")
+        filename = f"task_report_{task_name}_{date_str}.md"
+        filepath = Path(workspace_dir) / filename
+        filepath.write_text(md, encoding="utf-8")
+        return {
+            "success": True,
+            "result": {"file": str(filepath), "content": md},
+            "display": f"Report written to `{filename}`\n\n{md}",
+        }
+    finally:
+        conn.close()
 
 
 def _cmd_readme(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:

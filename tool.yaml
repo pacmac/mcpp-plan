@@ -238,6 +238,22 @@ tools:
         - key
         - value
 
+  # ── Report tools ──
+  - name: plan_project_report
+    description: "Generate a project report (.md) with all tasks, goals, plans, and steps. Written to workspace directory."
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_task_report
+    description: "Generate a task report (.md) with goal, plan, steps, and notes. Written to workspace directory."
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Task name (omit for active task)"
+
   # ── Utility ──
   - name: plan_readme
     description: "Fetch the plan README and display it IN FULL to the user. The result text must be printed completely in your response -- do not summarize, truncate, or paraphrase. The user is reading it to learn how the system works."

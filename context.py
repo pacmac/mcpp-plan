@@ -1383,3 +1383,166 @@ def list_step_notes(conn, step_number=None, user_id=None, project_id=None, kind=
 
 
 create_step = _orig_create_task  # already returns (step_id, step_number)
+
+
+# ── Report data gathering ──
+
+def get_project_report_data(
+    conn,
+    user_id: int | None = None,
+    project_id: int | None = None,
+) -> dict:
+    """Gather all data needed for a project report."""
+    # Project metadata
+    project = None
+    if project_id is not None:
+        project = db.get_project_by_id(conn, project_id)
+
+    # All tasks for this user/project
+    tasks = list_tasks(conn, user_id=user_id, project_id=project_id)
+    # Also include completed
+    all_tasks = list_tasks(conn, status_filter=None, user_id=user_id, project_id=project_id)
+
+    # For each task, get goal/plan notes and step counts
+    task_details = []
+    for t in all_tasks:
+        ctx_id = t["id"]
+        # Goal and plan notes
+        goal_plan_rows = conn.execute(
+            "SELECT kind, note_md FROM context_notes "
+            "WHERE context_id = ? AND kind IN ('goal', 'plan') AND note_md NOT LIKE '(migrated%' "
+            "ORDER BY kind, id",
+            (ctx_id,),
+        ).fetchall()
+        goal = None
+        plan = None
+        for r in goal_plan_rows:
+            if r["kind"] == "goal":
+                goal = r["note_md"]
+            elif r["kind"] == "plan":
+                plan = r["note_md"]
+
+        # Step counts
+        counts = conn.execute(
+            "SELECT "
+            "SUM(CASE WHEN status = 'complete' AND is_deleted = 0 THEN 1 ELSE 0 END) AS done, "
+            "SUM(CASE WHEN is_deleted = 0 THEN 1 ELSE 0 END) AS total "
+            "FROM tasks WHERE context_id = ?",
+            (ctx_id,),
+        ).fetchone()
+
+        # Steps detail
+        steps = conn.execute(
+            "SELECT task_number, title, status, description_md, is_deleted "
+            "FROM tasks WHERE context_id = ? ORDER BY task_number",
+            (ctx_id,),
+        ).fetchall()
+
+        task_details.append({
+            "id": ctx_id,
+            "name": t["name"],
+            "title": t.get("title", t["name"]),
+            "status": t.get("status", "active"),
+            "goal": goal,
+            "plan": plan,
+            "steps_done": counts["done"] or 0 if counts else 0,
+            "steps_total": counts["total"] or 0 if counts else 0,
+            "steps": [dict(s) for s in steps],
+        })
+
+    # Config
+    from . import config
+    cfg = config.get_config()
+
+    return {
+        "project": dict(project) if project else {},
+        "tasks": task_details,
+        "config": cfg,
+    }
+
+
+def get_task_report_data(
+    conn,
+    context_ref: str | int | None = None,
+    user_id: int | None = None,
+    project_id: int | None = None,
+) -> dict:
+    """Gather all data needed for a single task report."""
+    if context_ref is None:
+        context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+    else:
+        context_id = resolve_context_id(conn, context_ref, project_id=project_id)
+
+    context_row = conn.execute(
+        "SELECT id, name, status, description_md FROM contexts WHERE id = ?",
+        (context_id,),
+    ).fetchone()
+    if not context_row:
+        raise ValueError(f"Context {context_id} not found.")
+
+    # Goal and plan notes
+    goal_plan_rows = conn.execute(
+        "SELECT kind, note_md FROM context_notes "
+        "WHERE context_id = ? AND kind IN ('goal', 'plan') AND note_md NOT LIKE '(migrated%' "
+        "ORDER BY kind, id",
+        (context_id,),
+    ).fetchall()
+    goals = [r["note_md"] for r in goal_plan_rows if r["kind"] == "goal"]
+    plans = [r["note_md"] for r in goal_plan_rows if r["kind"] == "plan"]
+
+    # Task-level notes (kind=note only)
+    note_rows = conn.execute(
+        "SELECT note_md, created_at, actor FROM context_notes "
+        "WHERE context_id = ? AND kind = 'note' ORDER BY id",
+        (context_id,),
+    ).fetchall()
+
+    # Steps with their notes
+    steps = conn.execute(
+        "SELECT id, task_number, title, description_md, status, is_deleted "
+        "FROM tasks WHERE context_id = ? ORDER BY task_number",
+        (context_id,),
+    ).fetchall()
+
+    steps_data = []
+    for s in steps:
+        if s["is_deleted"]:
+            continue
+        step_notes = conn.execute(
+            "SELECT note_md, created_at, kind FROM task_notes "
+            "WHERE task_id = ? ORDER BY id",
+            (s["id"],),
+        ).fetchall()
+        steps_data.append({
+            "number": s["task_number"],
+            "title": s["title"],
+            "status": s["status"],
+            "description": s["description_md"],
+            "notes": [dict(n) for n in step_notes],
+        })
+
+    # Active step
+    state_row = conn.execute(
+        "SELECT active_task_id FROM context_state WHERE context_id = ?",
+        (context_id,),
+    ).fetchone()
+    active_step_num = None
+    if state_row and state_row["active_task_id"]:
+        active_row = conn.execute(
+            "SELECT task_number FROM tasks WHERE id = ?",
+            (state_row["active_task_id"],),
+        ).fetchone()
+        if active_row:
+            active_step_num = active_row["task_number"]
+
+    return {
+        "context_id": context_id,
+        "name": context_row["name"],
+        "title": context_row["description_md"] or context_row["name"],
+        "status": context_row["status"],
+        "goals": goals,
+        "plans": plans,
+        "notes": [dict(n) for n in note_rows],
+        "steps": steps_data,
+        "active_step": active_step_num,
+    }
