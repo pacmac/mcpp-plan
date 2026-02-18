@@ -72,21 +72,53 @@ tools:
       type: object
       properties: {}
 
-  - name: plan_task_notes
-    description: "Add or view notes on a task"
+  - name: plan_task_notes_set
+    description: "Set a note on a task. For goal/plan kinds, replaces the existing note (upsert by kind). For 'note' kind, pass id to update an existing note or omit to create new."
     inputSchema:
       type: object
       properties:
         text:
           type: string
-          description: "Note text to add (omit to read)"
+          description: "Note text to set"
         name:
           type: string
           description: "Task name (omit for active task)"
         kind:
           type: string
           enum: ["goal", "plan", "note"]
-          description: "Note kind: 'goal' (what), 'plan' (how), or 'note' (default). When reading, filters by kind."
+          description: "Note kind: 'goal' (what), 'plan' (how), or 'note' (default)"
+        id:
+          type: integer
+          description: "Note ID to update (omit to create new). Only used for 'note' kind."
+      required:
+        - text
+
+  - name: plan_task_notes_get
+    description: "View notes on a task. Returns notes with IDs for use with set/delete."
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Task name (omit for active task)"
+        kind:
+          type: string
+          enum: ["goal", "plan", "note"]
+          description: "Filter by note kind (omit for all)"
+
+  - name: plan_task_notes_delete
+    description: "Delete a note from a task by ID"
+    inputSchema:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: "Note ID to delete"
+        name:
+          type: string
+          description: "Task name (omit for active task)"
+      required:
+        - id
 
   # ── Step tools (individual items) ──
   - name: plan_step_switch
@@ -129,21 +161,45 @@ tools:
       required:
         - number
 
-  - name: plan_step_notes
-    description: "Add or view notes on a step"
+  - name: plan_step_notes_set
+    description: "Set a note on a step. Pass id to update an existing note or omit to create new."
     inputSchema:
       type: object
       properties:
         text:
           type: string
-          description: "Note text to add (omit to read)"
+          description: "Note text to set"
         number:
           type: integer
           description: "Step number (omit for active step)"
-        kind:
-          type: string
-          enum: ["goal", "plan", "note"]
-          description: "Note kind: 'goal' (what), 'plan' (how), or 'note' (default). When reading, filters by kind."
+        id:
+          type: integer
+          description: "Note ID to update (omit to create new)"
+      required:
+        - text
+
+  - name: plan_step_notes_get
+    description: "View notes on a step. Returns notes with IDs for use with set/delete."
+    inputSchema:
+      type: object
+      properties:
+        number:
+          type: integer
+          description: "Step number (omit for active step)"
+
+  - name: plan_step_notes_delete
+    description: "Delete a note from a step by ID"
+    inputSchema:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: "Note ID to delete"
+        number:
+          type: integer
+          description: "Step number (omit for active step)"
+      required:
+        - id
 
   - name: plan_step_new
     description: "Create a new step in a task"

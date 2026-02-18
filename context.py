@@ -604,15 +604,15 @@ def list_task_notes(
 
     if kind:
         rows = conn.execute(
-            "SELECT note_md, created_at, kind FROM task_notes WHERE task_id = ? AND kind = ? ORDER BY id",
+            "SELECT id, note_md, created_at, kind FROM task_notes WHERE task_id = ? AND kind = ? ORDER BY id",
             (task_id, kind),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT note_md, created_at, kind FROM task_notes WHERE task_id = ? ORDER BY id",
+            "SELECT id, note_md, created_at, kind FROM task_notes WHERE task_id = ? ORDER BY id",
             (task_id,),
         ).fetchall()
-    return [{"note": row["note_md"], "created_at": row["created_at"], "kind": row["kind"]} for row in rows]
+    return [{"id": row["id"], "note": row["note_md"], "created_at": row["created_at"], "kind": row["kind"]} for row in rows]
 
 
 def add_task_note(
@@ -624,6 +624,7 @@ def add_task_note(
     user_id: int | None = None,
     project_id: int | None = None,
     kind: str = "note",
+    note_id: int | None = None,
 ) -> int:
     if kind not in VALID_NOTE_KINDS:
         raise ValueError(f"Invalid note kind '{kind}'. Must be one of: {', '.join(VALID_NOTE_KINDS)}")
@@ -646,20 +647,52 @@ def add_task_note(
         else:
             task_id = _resolve_task_id_by_number(conn, context_id, task_number, allow_deleted=False)
 
-        cur = conn.execute(
-            "INSERT INTO task_notes (task_id, note_md, created_at, kind) VALUES (?, ?, ?, ?)",
-            (task_id, note_md, now, kind),
-        )
-        note_id = int(cur.lastrowid)
+        # Upsert: if note_id provided, update existing; otherwise insert new
+        if note_id is not None:
+            conn.execute(
+                "UPDATE task_notes SET note_md = ?, created_at = ? WHERE id = ?",
+                (note_md, now, note_id),
+            )
+            result_id = note_id
+            changelog_action = "Task Note Updated"
+        else:
+            cur = conn.execute(
+                "INSERT INTO task_notes (task_id, note_md, created_at, kind) VALUES (?, ?, ?, ?)",
+                (task_id, note_md, now, kind),
+            )
+            result_id = int(cur.lastrowid)
+            changelog_action = "Task Note Added"
 
         conn.execute(
             "INSERT INTO changelog (context_id, task_id, action, details_md, created_at, actor) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (context_id, task_id, "Task Note Added", note_md, now, actor),
+            (context_id, task_id, changelog_action, note_md, now, actor),
         )
 
         conn.commit()
-        return note_id
+        return result_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def delete_task_note(conn, note_id: int) -> None:
+    """Delete a task note by ID."""
+    conn.execute("BEGIN")
+    try:
+        row = conn.execute("SELECT task_id, note_md FROM task_notes WHERE id = ?", (note_id,)).fetchone()
+        if not row:
+            raise ValueError(f"Task note with id {note_id} not found.")
+        # Look up context_id from the task
+        task_row = conn.execute("SELECT context_id FROM tasks WHERE id = ?", (row["task_id"],)).fetchone()
+        now = db.utc_now_iso()
+        conn.execute("DELETE FROM task_notes WHERE id = ?", (note_id,))
+        conn.execute(
+            "INSERT INTO changelog (context_id, task_id, action, details_md, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (task_row["context_id"] if task_row else None, row["task_id"], "Task Note Deleted", row["note_md"][:100], now),
+        )
+        conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -679,15 +712,15 @@ def list_context_notes(
 
     if kind:
         rows = conn.execute(
-            "SELECT note_md, created_at, actor, kind FROM context_notes WHERE context_id = ? AND kind = ? ORDER BY id",
+            "SELECT id, note_md, created_at, actor, kind FROM context_notes WHERE context_id = ? AND kind = ? ORDER BY id",
             (context_id, kind),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT note_md, created_at, actor, kind FROM context_notes WHERE context_id = ? ORDER BY id",
+            "SELECT id, note_md, created_at, actor, kind FROM context_notes WHERE context_id = ? ORDER BY id",
             (context_id,),
         ).fetchall()
-    return [{"note": row["note_md"], "created_at": row["created_at"], "actor": row["actor"], "kind": row["kind"]} for row in rows]
+    return [{"id": row["id"], "note": row["note_md"], "created_at": row["created_at"], "actor": row["actor"], "kind": row["kind"]} for row in rows]
 
 
 def add_context_note(
@@ -698,6 +731,7 @@ def add_context_note(
     user_id: int | None = None,
     project_id: int | None = None,
     kind: str = "note",
+    note_id: int | None = None,
 ) -> int:
     if kind not in VALID_NOTE_KINDS:
         raise ValueError(f"Invalid note kind '{kind}'. Must be one of: {', '.join(VALID_NOTE_KINDS)}")
@@ -709,20 +743,62 @@ def add_context_note(
         else:
             context_id = resolve_context_id(conn, context_ref)
 
-        cur = conn.execute(
-            "INSERT INTO context_notes (context_id, note_md, created_at, actor, kind) VALUES (?, ?, ?, ?, ?)",
-            (context_id, note_md, now, actor, kind),
-        )
-        note_id = int(cur.lastrowid)
+        # Upsert logic: for goal/plan kinds, replace existing by (context_id, kind).
+        # For note kind, update by ID if provided.
+        existing_id = None
+        if kind in ("goal", "plan"):
+            row = conn.execute(
+                "SELECT id FROM context_notes WHERE context_id = ? AND kind = ?",
+                (context_id, kind),
+            ).fetchone()
+            if row:
+                existing_id = row[0]
+        elif note_id is not None:
+            existing_id = note_id
+
+        if existing_id is not None:
+            conn.execute(
+                "UPDATE context_notes SET note_md = ?, created_at = ?, actor = ? WHERE id = ?",
+                (note_md, now, actor, existing_id),
+            )
+            result_id = existing_id
+            changelog_action = "Context Note Updated"
+        else:
+            cur = conn.execute(
+                "INSERT INTO context_notes (context_id, note_md, created_at, actor, kind) VALUES (?, ?, ?, ?, ?)",
+                (context_id, note_md, now, actor, kind),
+            )
+            result_id = int(cur.lastrowid)
+            changelog_action = "Context Note Added"
 
         conn.execute(
             "INSERT INTO changelog (context_id, action, details_md, created_at, actor) "
             "VALUES (?, ?, ?, ?, ?)",
-            (context_id, "Context Note Added", note_md, now, actor),
+            (context_id, changelog_action, note_md, now, actor),
         )
 
         conn.commit()
-        return note_id
+        return result_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def delete_context_note(conn, note_id: int) -> None:
+    """Delete a context note by ID."""
+    conn.execute("BEGIN")
+    try:
+        row = conn.execute("SELECT context_id, note_md FROM context_notes WHERE id = ?", (note_id,)).fetchone()
+        if not row:
+            raise ValueError(f"Context note with id {note_id} not found.")
+        now = db.utc_now_iso()
+        conn.execute("DELETE FROM context_notes WHERE id = ?", (note_id,))
+        conn.execute(
+            "INSERT INTO changelog (context_id, action, details_md, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (row["context_id"], "Context Note Deleted", row["note_md"][:100], now),
+        )
+        conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -974,7 +1050,17 @@ def get_task_summary(
         ).fetchone()
     if not row:
         raise ValueError(f"Task {task_number} not found in context {context_id}.")
-    return dict(row)
+    result = dict(row)
+
+    # Include step/task notes with IDs
+    task_id = row["id"]
+    note_rows = conn.execute(
+        "SELECT id, note_md, created_at, kind FROM task_notes WHERE task_id = ? ORDER BY id",
+        (task_id,),
+    ).fetchall()
+    result["notes"] = [{"id": r["id"], "note": r["note_md"], "created_at": r["created_at"], "kind": r["kind"]} for r in note_rows]
+
+    return result
 
 
 def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | None = None, project_id: int | None = None) -> dict:
@@ -1012,13 +1098,20 @@ def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | Non
 
     # Fetch goal and plan notes for inline display
     goal_plan_rows = conn.execute(
-        "SELECT kind, note_md FROM context_notes "
+        "SELECT id, kind, note_md FROM context_notes "
         "WHERE context_id = ? AND kind IN ('goal', 'plan') AND note_md NOT LIKE '(migrated%' "
         "ORDER BY kind, id",
         (context_id,),
     ).fetchall()
     goal_notes = [r["note_md"] for r in goal_plan_rows if r["kind"] == "goal"]
     plan_notes = [r["note_md"] for r in goal_plan_rows if r["kind"] == "plan"]
+
+    # Fetch all context notes with IDs for agent use
+    all_notes = conn.execute(
+        "SELECT id, note_md, created_at, actor, kind FROM context_notes WHERE context_id = ? ORDER BY id",
+        (context_id,),
+    ).fetchall()
+    notes_list = [{"id": r["id"], "note": r["note_md"], "created_at": r["created_at"], "actor": r["actor"], "kind": r["kind"]} for r in all_notes]
 
     return {
         "context_id": context_id,
@@ -1029,6 +1122,7 @@ def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | Non
         "active_task_number": active_task_number,
         "goal": goal_notes[-1] if goal_notes else None,
         "plan": plan_notes[-1] if plan_notes else None,
+        "notes": notes_list,
         "tasks": [dict(row) for row in tasks],
     }
 
@@ -1372,9 +1466,14 @@ def delete_step(conn, step_number, task_ref=None, user_id=None, project_id=None)
     return delete_task(conn, step_number, context_ref=task_ref, user_id=user_id, project_id=project_id)
 
 
-def add_step_note(conn, note_md, step_number=None, user_id=None, project_id=None, kind="note"):
+def add_step_note(conn, note_md, step_number=None, user_id=None, project_id=None, kind="note", note_id=None):
     """Adapter: step_number → task_number."""
-    return add_task_note(conn, note_md, task_number=step_number, user_id=user_id, project_id=project_id, kind=kind)
+    return add_task_note(conn, note_md, task_number=step_number, user_id=user_id, project_id=project_id, kind=kind, note_id=note_id)
+
+
+def delete_step_note(conn, note_id: int) -> None:
+    """Adapter: wraps delete_task_note."""
+    return delete_task_note(conn, note_id)
 
 
 def list_step_notes(conn, step_number=None, user_id=None, project_id=None, kind=None):

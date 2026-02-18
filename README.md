@@ -63,7 +63,9 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_task_status` | Show active task and progress |
 | `plan_task_switch` | Switch to a different task |
 | `plan_task_complete` | Mark a task as completed |
-| `plan_task_notes` | Add or read notes on a task (supports `kind`: goal, plan, note) |
+| `plan_task_notes_set` | Set a note on a task (upsert: goal/plan replace by kind, note updates by ID or creates new) |
+| `plan_task_notes_get` | View notes on a task (returns notes with IDs) |
+| `plan_task_notes_delete` | Delete a note from a task by ID |
 
 ### Step tools
 
@@ -75,7 +77,9 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_step_done` | Mark a step as complete |
 | `plan_step_new` | Add a step to a task |
 | `plan_step_delete` | Soft-delete a step |
-| `plan_step_notes` | Add or read notes on a step (supports `kind`: goal, plan, note) |
+| `plan_step_notes_set` | Set a note on a step (upsert: updates by ID or creates new) |
+| `plan_step_notes_get` | View notes on a step (returns notes with IDs) |
+| `plan_step_notes_delete` | Delete a note from a step by ID |
 
 ### User tools
 
@@ -153,17 +157,35 @@ Notes have a `kind` field that classifies their purpose:
 | `plan` | **How** it will be done | Before starting work -- defines the approach |
 | `note` | Observations and updates | During execution -- freeform (default) |
 
-### Adding typed notes
+### Setting notes
 
-Pass the `kind` parameter when adding notes:
+Use `_set` tools to create or update notes. For goal/plan kinds, the note is upserted by kind (only one goal and one plan per task). For regular notes, pass an `id` to update or omit to create new:
 
 ```
-plan_task_notes  text="Implement user authentication"  kind="goal"
-plan_task_notes  text="Use JWT with refresh tokens"    kind="plan"
-plan_task_notes  text="Decided to skip OAuth for now"  kind="note"
+plan_task_notes_set  text="Implement user authentication"  kind="goal"
+plan_task_notes_set  text="Use JWT with refresh tokens"    kind="plan"
+plan_task_notes_set  text="Decided to skip OAuth for now"
 ```
 
-Omitting `kind` defaults to `"note"`. You can also filter when reading: `plan_task_notes kind="goal"` returns only goal notes.
+Setting goal or plan again replaces the existing one — no duplicates.
+
+### Reading notes
+
+Use `_get` tools to view notes. Notes are returned with IDs so you can update or delete them:
+
+```
+plan_task_notes_get                  # all notes
+plan_task_notes_get  kind="goal"     # only goal notes
+```
+
+### Updating and deleting notes
+
+Pass the note `id` (returned by `_get`, `_set`, `show`, and `switch`) to update or delete:
+
+```
+plan_task_notes_set     text="Revised note"  id=42    # update note 42
+plan_task_notes_delete  id=42                          # delete note 42
+```
 
 ### Workflow enforcement
 
@@ -176,7 +198,7 @@ workflow:
 
 ### Display
 
-`plan_task_show` displays goal and plan notes inline, so the purpose and approach are always visible when viewing a task.
+`plan_task_show` and `plan_task_switch` display goal and plan notes inline and return all notes with IDs, so the purpose and approach are always visible and notes can be updated in a single follow-up call. `plan_step_show` and `plan_step_switch` similarly include step notes with IDs.
 
 ### Migrated tasks
 

@@ -33,7 +33,8 @@ def _fmt_notes(notes: list[dict], label: str = "Notes") -> str:
         actor = f" — {n['actor']}" if n.get("actor") else ""
         kind = n.get("kind", "note")
         kind_tag = f"[{kind}] " if kind != "note" else ""
-        lines.append(f"- {kind_tag}{n['note']}{actor}")
+        note_id = f" (id:{n['id']})" if "id" in n else ""
+        lines.append(f"- {kind_tag}{n['note']}{actor}{note_id}")
     return "\n".join(lines)
 
 
@@ -46,6 +47,8 @@ def _fmt_task_show(data: dict) -> str:
         lines.append(f"  **Goal**: {goal}")
     if plan := data.get("plan"):
         lines.append(f"  **Plan**: {plan}")
+    if notes := data.get("notes"):
+        lines.append(_fmt_notes(notes, "Task notes"))
     for t in data.get("tasks", []):
         num = t["task_number"]
         deleted = t.get("is_deleted")
@@ -124,6 +127,8 @@ def _fmt_step_show(data: dict) -> str:
     line = f"**Step {num}**: {title} [{status}]"
     if desc:
         line += f"\n{desc}"
+    if notes := data.get("notes"):
+        line += "\n" + _fmt_notes(notes, "Step notes")
     return line
 
 
@@ -336,6 +341,8 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         name = None
                         text = None
                         kind = None
+                        note_id = None
+                        delete_id = None
                         i = 2
                         while i < len(cmd_args):
                             if cmd_args[i] == "--name" and i + 1 < len(cmd_args):
@@ -344,14 +351,25 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                             elif cmd_args[i] == "--kind" and i + 1 < len(cmd_args):
                                 kind = cmd_args[i + 1]
                                 i += 2
+                            elif cmd_args[i] == "--id" and i + 1 < len(cmd_args):
+                                note_id = int(cmd_args[i + 1])
+                                i += 2
+                            elif cmd_args[i] == "--delete" and i + 1 < len(cmd_args):
+                                delete_id = int(cmd_args[i + 1])
+                                i += 2
                             elif not cmd_args[i].startswith("--"):
                                 text = cmd_args[i]
                                 i += 1
                             else:
                                 i += 1
 
-                        if text:
-                            plan_ctx.add_context_note(conn, text, context_ref=name, user_id=_user_id, project_id=_project_id, kind=kind or "note")
+                        if delete_id is not None:
+                            plan_ctx.delete_context_note(conn, delete_id)
+                            notes = plan_ctx.list_context_notes(conn, context_ref=name, user_id=_user_id, project_id=_project_id)
+                            conn.close()
+                            return {"success": True, "result": {"notes": notes}}
+                        elif text:
+                            plan_ctx.add_context_note(conn, text, context_ref=name, user_id=_user_id, project_id=_project_id, kind=kind or "note", note_id=note_id)
                             notes = plan_ctx.list_context_notes(conn, context_ref=name, user_id=_user_id, project_id=_project_id)
                             conn.close()
                             return {"success": True, "result": {"notes": notes}}
@@ -438,6 +456,8 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         number = None
                         text = None
                         kind = None
+                        note_id = None
+                        delete_id = None
                         i = 2
                         while i < len(cmd_args):
                             if cmd_args[i] == "--step-number" and i + 1 < len(cmd_args):
@@ -446,14 +466,24 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                             elif cmd_args[i] == "--kind" and i + 1 < len(cmd_args):
                                 kind = cmd_args[i + 1]
                                 i += 2
+                            elif cmd_args[i] == "--id" and i + 1 < len(cmd_args):
+                                note_id = int(cmd_args[i + 1])
+                                i += 2
+                            elif cmd_args[i] == "--delete" and i + 1 < len(cmd_args):
+                                delete_id = int(cmd_args[i + 1])
+                                i += 2
                             elif not cmd_args[i].startswith("--"):
                                 text = cmd_args[i]
                                 i += 1
                             else:
                                 i += 1
 
-                        if text:
-                            plan_ctx.add_step_note(conn, text, step_number=number, user_id=_user_id, project_id=_project_id, kind=kind or "note")
+                        if delete_id is not None:
+                            plan_ctx.delete_step_note(conn, delete_id)
+                            notes = plan_ctx.list_step_notes(conn, step_number=number, user_id=_user_id, project_id=_project_id)
+                            return {"success": True, "result": {"notes": notes}}
+                        elif text:
+                            plan_ctx.add_step_note(conn, text, step_number=number, user_id=_user_id, project_id=_project_id, kind=kind or "note", note_id=note_id)
                             notes = plan_ctx.list_step_notes(conn, step_number=number, user_id=_user_id, project_id=_project_id)
                             return {"success": True, "result": {"notes": notes}}
                         else:
@@ -518,13 +548,19 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_task_switch": _cmd_task_switch,
         "plan_task_show": _cmd_task_show,
         "plan_task_status": _cmd_task_status,
-        "plan_task_notes": _cmd_task_notes,
+        "plan_task_notes": _cmd_task_notes,  # backward compat
+        "plan_task_notes_set": _cmd_task_notes_set,
+        "plan_task_notes_get": _cmd_task_notes_get,
+        "plan_task_notes_delete": _cmd_task_notes_delete,
         # Step tools (individual items)
         "plan_step_switch": _cmd_step_switch,
         "plan_step_show": _cmd_step_show,
         "plan_step_list": _cmd_step_list,
         "plan_step_done": _cmd_step_done,
-        "plan_step_notes": _cmd_step_notes,
+        "plan_step_notes": _cmd_step_notes,  # backward compat
+        "plan_step_notes_set": _cmd_step_notes_set,
+        "plan_step_notes_get": _cmd_step_notes_get,
+        "plan_step_notes_delete": _cmd_step_notes_delete,
         "plan_step_new": _cmd_step_new,
         "plan_step_delete": _cmd_step_delete,
         # User tools
@@ -659,7 +695,7 @@ def _cmd_task_status(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
 
 
 def _cmd_task_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
-    """plan task notes [text] [--name <name>] [--kind <kind>]"""
+    """plan task notes [text] [--name <name>] [--kind <kind>] (backward compat)"""
     cmd = ["task", "notes"]
 
     if text := args.get("text"):
@@ -670,6 +706,62 @@ def _cmd_task_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if kind := args.get("kind"):
         cmd.extend(["--kind", kind])
+
+    cmd.append("--json")
+
+    r = _run_plan_cmd(workspace_dir, cmd)
+    return _with_display(r, _fmt_notes(r.get("result", {}).get("notes", []), "Task notes"))
+
+
+def _cmd_task_notes_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Set (upsert) a note on a task."""
+    text = args.get("text")
+    if not text:
+        return {"success": False, "error": "text is required"}
+
+    cmd = ["task", "notes", text]
+
+    if name := args.get("name"):
+        cmd.extend(["--name", name])
+
+    if kind := args.get("kind"):
+        cmd.extend(["--kind", kind])
+
+    if note_id := args.get("id"):
+        cmd.extend(["--id", str(note_id)])
+
+    cmd.append("--json")
+
+    r = _run_plan_cmd(workspace_dir, cmd)
+    return _with_display(r, _fmt_notes(r.get("result", {}).get("notes", []), "Task notes"))
+
+
+def _cmd_task_notes_get(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """View notes on a task."""
+    cmd = ["task", "notes"]
+
+    if name := args.get("name"):
+        cmd.extend(["--name", name])
+
+    if kind := args.get("kind"):
+        cmd.extend(["--kind", kind])
+
+    cmd.append("--json")
+
+    r = _run_plan_cmd(workspace_dir, cmd)
+    return _with_display(r, _fmt_notes(r.get("result", {}).get("notes", []), "Task notes"))
+
+
+def _cmd_task_notes_delete(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Delete a note from a task by ID."""
+    note_id = args.get("id")
+    if note_id is None:
+        return {"success": False, "error": "id is required"}
+
+    cmd = ["task", "notes", "--delete", str(note_id)]
+
+    if name := args.get("name"):
+        cmd.extend(["--name", name])
 
     cmd.append("--json")
 
@@ -722,7 +814,7 @@ def _cmd_step_done(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _cmd_step_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
-    """plan step notes [text] [--step-number <number>] [--kind <kind>] --json"""
+    """plan step notes [text] [--step-number <number>] [--kind <kind>] --json (backward compat)"""
     cmd = ["step", "notes"]
 
     if text := args.get("text"):
@@ -733,6 +825,56 @@ def _cmd_step_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if kind := args.get("kind"):
         cmd.extend(["--kind", kind])
+
+    cmd.append("--json")
+
+    r = _run_plan_cmd(workspace_dir, cmd)
+    return _with_display(r, _fmt_notes(r.get("result", {}).get("notes", []), "Step notes"))
+
+
+def _cmd_step_notes_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Set (upsert) a note on a step."""
+    text = args.get("text")
+    if not text:
+        return {"success": False, "error": "text is required"}
+
+    cmd = ["step", "notes", text]
+
+    if number := args.get("number"):
+        cmd.extend(["--step-number", str(number)])
+
+    if note_id := args.get("id"):
+        cmd.extend(["--id", str(note_id)])
+
+    cmd.append("--json")
+
+    r = _run_plan_cmd(workspace_dir, cmd)
+    return _with_display(r, _fmt_notes(r.get("result", {}).get("notes", []), "Step notes"))
+
+
+def _cmd_step_notes_get(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """View notes on a step."""
+    cmd = ["step", "notes"]
+
+    if number := args.get("number"):
+        cmd.extend(["--step-number", str(number)])
+
+    cmd.append("--json")
+
+    r = _run_plan_cmd(workspace_dir, cmd)
+    return _with_display(r, _fmt_notes(r.get("result", {}).get("notes", []), "Step notes"))
+
+
+def _cmd_step_notes_delete(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Delete a note from a step by ID."""
+    note_id = args.get("id")
+    if note_id is None:
+        return {"success": False, "error": "id is required"}
+
+    cmd = ["step", "notes", "--delete", str(note_id)]
+
+    if number := args.get("number"):
+        cmd.extend(["--step-number", str(number)])
 
     cmd.append("--json")
 
