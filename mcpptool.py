@@ -572,6 +572,8 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         # Config tools
         "plan_config_show": _cmd_config_show,
         "plan_config_set": _cmd_config_set,
+        # Task adoption
+        "plan_task_adopt": _cmd_task_adopt,
         # Report tools
         "plan_project_report": _cmd_project_report,
         "plan_task_report": _cmd_task_report,
@@ -767,6 +769,39 @@ def _cmd_task_notes_delete(workspace_dir: str, args: dict[str, Any]) -> dict[str
 
     r = _run_plan_cmd(workspace_dir, cmd)
     return _with_display(r, _fmt_notes(r.get("result", {}).get("notes", []), "Task notes"))
+
+
+# ── Task adopt handler ──
+
+def _cmd_task_adopt(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Adopt (deep-copy) another user's task into your own task list."""
+    name = args.get("name")
+    if not name:
+        return {"success": False, "error": "name is required (source task name to adopt)"}
+
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        new_name = args.get("new_name")
+        reset = args.get("reset", True)
+        new_context_id = plan_ctx.adopt_context(
+            conn,
+            source_name=name,
+            new_name=new_name,
+            reset=reset,
+            set_active=True,
+            user_id=user_id,
+            project_id=project_id,
+        )
+        result = plan_ctx.get_task_show(conn, new_context_id, project_id=project_id)
+        display = f"Adopted task **{name}**" + (f" as **{new_name}**" if new_name else "") + "\n\n"
+        display += _fmt_task_show(result)
+        return _with_display({"success": True, "result": result}, display)
+    finally:
+        conn.close()
 
 
 # ── Step command handlers (individual items) ──

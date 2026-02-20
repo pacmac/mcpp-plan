@@ -63,6 +63,7 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_task_status` | Show active task and progress |
 | `plan_task_switch` | Switch to a different task |
 | `plan_task_complete` | Mark a task as completed |
+| `plan_task_adopt` | Adopt (deep-copy) another user's task into your own list |
 | `plan_task_notes_set` | Set a note on a task (upsert: goal/plan replace by kind, note updates by ID or creates new) |
 | `plan_task_notes_get` | View notes on a task (returns notes with IDs) |
 | `plan_task_notes_delete` | Delete a note from a task by ID |
@@ -203,6 +204,27 @@ workflow:
 ### Migrated tasks
 
 Tasks that existed before note kinds were introduced have migration placeholder notes (`"(migrated — no goal defined)"`). These are not displayed in `plan_task_show` and do not satisfy workflow enforcement. Replace them by adding real goal and plan notes to those tasks.
+
+## Task adoption
+
+Use `plan_task_adopt` to deep-copy another user's task (or clone your own) into your task list. This is useful when multiple agents or users want to work on similar tasks independently, or when you want to fork a task as a starting point.
+
+```
+plan_task_adopt  name="build-auth"  new_name="build-auth-v2"
+```
+
+What gets copied:
+- Task metadata (name, description)
+- All steps (with parent references remapped)
+- All task-level notes (goal, plan, note)
+- All step-level notes
+
+What does **not** get copied:
+- Changelog — a single "Adopted from {user}/{task}" entry is created instead
+
+By default, all step statuses are reset to `planned` so you start fresh. Pass `reset=false` to preserve original statuses.
+
+The adopted task becomes active automatically. A `new_name` is required if a task with the source name already exists in the project.
 
 ## Database
 

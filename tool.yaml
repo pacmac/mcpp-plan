@@ -120,6 +120,23 @@ tools:
       required:
         - id
 
+  - name: plan_task_adopt
+    description: "Adopt (deep-copy) another user's task into your own task list. Copies all steps, notes (goal/plan/note), and step notes. Does NOT copy changelog."
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Source task name to adopt"
+        new_name:
+          type: string
+          description: "Name for the adopted copy (required if source name already exists in your tasks)"
+        reset:
+          type: boolean
+          description: "Reset all step statuses to 'planned' (default: true). Set false to preserve original statuses."
+      required:
+        - name
+
   # ── Step tools (individual items) ──
   - name: plan_step_switch
     description: "Switch to a specific step within active task"

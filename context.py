@@ -1387,6 +1387,196 @@ def _insert_tasks(conn, context_id: int, tasks: list[TaskInput], now: str) -> li
     return task_ids
 
 
+def adopt_context(
+    conn,
+    source_name: str,
+    new_name: Optional[str] = None,
+    reset: bool = True,
+    set_active: bool = True,
+    actor: Optional[str] = None,
+    user_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+) -> int:
+    """Deep-copy another user's context (task) into the current user's task list.
+
+    Copies: context row, context_state, context_notes (goal/plan/note),
+    tasks (steps) with parent_id remapping, and task_notes (step notes).
+    Does NOT copy changelog — adds a single "Adopted from ..." entry instead.
+
+    Returns the new context_id.
+    """
+    now = db.utc_now_iso()
+    conn.execute("BEGIN")
+    try:
+        # 1. Resolve source context
+        source_id = resolve_context_id(conn, source_name, project_id=project_id)
+        source_row = conn.execute(
+            "SELECT id, name, description_md, user_id, project_id FROM contexts WHERE id = ?",
+            (source_id,),
+        ).fetchone()
+        if not source_row:
+            raise ValueError(f"Source context '{source_name}' not found.")
+
+        # 2. Determine target name
+        target_name = new_name or source_row["name"]
+
+        # 3. Check name collision within the same project
+        target_project = project_id or source_row["project_id"]
+        if target_project is not None:
+            collision = conn.execute(
+                "SELECT id FROM contexts WHERE name = ? AND project_id = ?",
+                (target_name, target_project),
+            ).fetchone()
+        else:
+            collision = conn.execute(
+                "SELECT id FROM contexts WHERE name = ?",
+                (target_name,),
+            ).fetchone()
+        if collision:
+            raise ValueError(
+                f"A task named '{target_name}' already exists in this project. "
+                f"Use new_name to specify a different name."
+            )
+
+        # 4. INSERT new context
+        cur = conn.execute(
+            "INSERT INTO contexts (name, status, description_md, user_id, project_id, created_at, updated_at) "
+            "VALUES (?, 'active', ?, ?, ?, ?, ?)",
+            (target_name, source_row["description_md"], user_id, target_project, now, now),
+        )
+        new_context_id = int(cur.lastrowid)
+
+        # 5. INSERT context_state (no active task yet — will set after copying steps)
+        conn.execute(
+            "INSERT INTO context_state (context_id, active_task_id, last_task_id, next_step, "
+            "status_label, last_event, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (new_context_id, None, None, None, "Created", "Task Adopted", now),
+        )
+
+        # 6. Copy context_notes (goal, plan, note)
+        source_notes = conn.execute(
+            "SELECT note_md, created_at, actor, kind FROM context_notes WHERE context_id = ? ORDER BY id",
+            (source_id,),
+        ).fetchall()
+        for note in source_notes:
+            conn.execute(
+                "INSERT INTO context_notes (context_id, note_md, created_at, actor, kind) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (new_context_id, note["note_md"], note["created_at"], note["actor"], note["kind"]),
+            )
+
+        # 7. Copy tasks (steps) with parent_id remapping
+        source_tasks = conn.execute(
+            "SELECT id, task_number, title, description_md, status, is_deleted, parent_id, "
+            "sort_index, sub_index, created_at, updated_at, completed_at "
+            "FROM tasks WHERE context_id = ? ORDER BY task_number",
+            (source_id,),
+        ).fetchall()
+
+        old_to_new: dict[int, int] = {}  # old task.id → new task.id
+        first_task_id = None
+
+        for task in source_tasks:
+            task_status = STATUS_PLANNED if reset else task["status"]
+            task_completed = None if reset else task["completed_at"]
+
+            cur = conn.execute(
+                "INSERT INTO tasks (context_id, task_number, title, description_md, status, is_deleted, "
+                "parent_id, sort_index, sub_index, created_at, updated_at, completed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+                (
+                    new_context_id,
+                    task["task_number"],
+                    task["title"],
+                    task["description_md"],
+                    task_status,
+                    task["is_deleted"],
+                    task["sort_index"],
+                    task["sub_index"],
+                    now,
+                    now,
+                    task_completed,
+                ),
+            )
+            new_task_id = int(cur.lastrowid)
+            old_to_new[task["id"]] = new_task_id
+            if first_task_id is None and task["is_deleted"] == 0:
+                first_task_id = new_task_id
+
+        # Second pass: fix parent_id references
+        for old_id, new_id in old_to_new.items():
+            source_task = conn.execute(
+                "SELECT parent_id FROM tasks WHERE id = ?", (old_id,),
+            ).fetchone()
+            if source_task and source_task["parent_id"] is not None:
+                new_parent = old_to_new.get(source_task["parent_id"])
+                if new_parent is not None:
+                    conn.execute(
+                        "UPDATE tasks SET parent_id = ? WHERE id = ?",
+                        (new_parent, new_id),
+                    )
+
+        # 8. Copy task_notes (step notes)
+        for old_task_id, new_task_id in old_to_new.items():
+            step_notes = conn.execute(
+                "SELECT note_md, created_at, kind FROM task_notes WHERE task_id = ? ORDER BY id",
+                (old_task_id,),
+            ).fetchall()
+            for note in step_notes:
+                conn.execute(
+                    "INSERT INTO task_notes (task_id, note_md, created_at, kind) VALUES (?, ?, ?, ?)",
+                    (new_task_id, note["note_md"], note["created_at"], note["kind"]),
+                )
+
+        # 9. Set first non-deleted step as active
+        if first_task_id is not None:
+            conn.execute(
+                "UPDATE tasks SET status = 'started', updated_at = ? WHERE id = ?",
+                (now, first_task_id),
+            )
+            first_task_number = conn.execute(
+                "SELECT task_number FROM tasks WHERE id = ?", (first_task_id,),
+            ).fetchone()["task_number"]
+            conn.execute(
+                "UPDATE context_state SET active_task_id = ?, last_task_id = ?, "
+                "last_event = ?, updated_at = ? WHERE context_id = ?",
+                (first_task_id, first_task_id, "Task Started", now, new_context_id),
+            )
+            _set_next_step_for_active_task(
+                conn, new_context_id, first_task_id, int(first_task_number), now
+            )
+        else:
+            _set_next_step_for_new_task(conn, new_context_id, now)
+
+        # 10. Set active if requested
+        if set_active:
+            if user_id is not None and project_id is not None:
+                db.upsert_user_state(conn, user_id, project_id, new_context_id)
+            db.upsert_global_state(conn, new_context_id)
+
+        # 11. Changelog entry
+        source_user_display = "unknown"
+        if source_row["user_id"]:
+            source_user_display = db.get_user_display(conn, source_row["user_id"])
+        conn.execute(
+            "INSERT INTO changelog (context_id, action, details_md, created_at, actor) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                new_context_id,
+                "Task Adopted",
+                f"Adopted from {source_user_display}/{source_row['name']}",
+                now,
+                actor,
+            ),
+        )
+
+        conn.commit()
+        return new_context_id
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # =============================================================================
 # Aliases: agent→plan, context→task, task→step rename (commit f03d9b3)
 # main.py expects the new names; the functions above use the old names.
@@ -1408,6 +1598,7 @@ get_task_status = get_plan_status
 resolve_task_id = resolve_context_id
 resolve_active_task_id = resolve_active_context_id
 switch_task = switch_context
+adopt_task = adopt_context
 
 
 def list_tasks(conn, status_filter=None, user_id=None, show_all_users=False, project_id=None):
