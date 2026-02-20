@@ -2,6 +2,8 @@
 
 A persistent task and step tracker for AI coding agents. Gives Claude Code (or any MCP-compatible agent) the ability to break work into tasks, track steps within each task, and remember exactly where it left off across sessions.
 
+> **New here?** See [RAPIDSTART.md](RAPIDSTART.md) — clone, configure, and start using it in under 10 minutes.
+
 > **Dogfooded daily.** This module is developed, maintained, and continuously improved using itself. Every feature gets real-world testing the moment it's built.
 >
 > **Agent-portable.** Start a task in one agent, pick it up in another — no context lost. The state lives in the database, not the conversation.
