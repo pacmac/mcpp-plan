@@ -561,6 +561,31 @@ def _resolve_step_id_by_subindex(
     return int(row["id"])
 
 
+def _renumber_steps(conn, context_id: int) -> None:
+    """Renumber non-deleted steps in a context sequentially from 1.
+
+    Uses two passes to avoid unique index conflicts:
+    1. NULL all sub_index for non-deleted rows in this context
+    2. Assign 1, 2, 3... ordered by current task_number
+    """
+    conn.execute(
+        "UPDATE tasks SET sub_index = NULL "
+        "WHERE context_id = ? AND is_deleted = 0",
+        (context_id,),
+    )
+    rows = conn.execute(
+        "SELECT id FROM tasks "
+        "WHERE context_id = ? AND is_deleted = 0 "
+        "ORDER BY task_number",
+        (context_id,),
+    ).fetchall()
+    for i, row in enumerate(rows, start=1):
+        conn.execute(
+            "UPDATE tasks SET sub_index = ? WHERE id = ?",
+            (i, row["id"]),
+        )
+
+
 VALID_NOTE_KINDS = ("goal", "plan", "note")
 
 
