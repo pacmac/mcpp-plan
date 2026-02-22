@@ -546,6 +546,21 @@ def _resolve_task_id_by_number(
     return int(row["id"])
 
 
+def _resolve_step_id_by_subindex(
+    conn,
+    context_id: int,
+    sub_index: int,
+) -> int:
+    """Resolve a step's sub_index to its task id (non-deleted only)."""
+    row = conn.execute(
+        "SELECT id FROM tasks WHERE context_id = ? AND sub_index = ? AND is_deleted = 0",
+        (context_id, sub_index),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Step {sub_index} not found in context {context_id}.")
+    return int(row["id"])
+
+
 VALID_NOTE_KINDS = ("goal", "plan", "note")
 
 
