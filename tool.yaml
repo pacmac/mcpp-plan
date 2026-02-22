@@ -249,6 +249,19 @@ tools:
       required:
         - number
 
+  - name: plan_step_reorder
+    description: "Reorder steps within the active task. Provide all step numbers in their desired new order."
+    inputSchema:
+      type: object
+      properties:
+        order:
+          type: array
+          items:
+            type: integer
+          description: "List of all current step numbers in desired new order (e.g. [3,1,2] moves step 3 to position 1)"
+      required:
+        - order
+
   # ── User tools ──
   - name: plan_user_show
     description: "Show the current user (OS login and display name/alias)"

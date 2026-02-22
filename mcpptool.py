@@ -452,6 +452,29 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         result = plan_ctx.list_steps(conn, user_id=_user_id, project_id=_project_id)
                         return {"success": True, "result": result}
 
+                    elif action == "reorder":
+                        # Parse order from --order flag or remaining positional args
+                        order = []
+                        i = 2
+                        while i < len(cmd_args):
+                            if cmd_args[i] == "--order" and i + 1 < len(cmd_args):
+                                # Accept comma-separated or JSON list
+                                raw = cmd_args[i + 1]
+                                order = [int(x.strip()) for x in raw.strip("[]").split(",")]
+                                i += 2
+                            else:
+                                try:
+                                    order.append(int(cmd_args[i]))
+                                except ValueError:
+                                    pass
+                                i += 1
+                        if not order:
+                            return {"success": False, "error": "order is required (list of step numbers in desired order)"}
+                        mapping = plan_ctx.reorder_steps(conn, order, user_id=_user_id, project_id=_project_id)
+                        result = plan_ctx.list_steps(conn, user_id=_user_id, project_id=_project_id)
+                        result["mapping"] = mapping
+                        return {"success": True, "result": result}
+
                     elif action == "notes":
                         number = None
                         text = None
@@ -563,6 +586,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_step_notes_delete": _cmd_step_notes_delete,
         "plan_step_new": _cmd_step_new,
         "plan_step_delete": _cmd_step_delete,
+        "plan_step_reorder": _cmd_step_reorder,
         # User tools
         "plan_user_show": _cmd_user_show,
         "plan_user_set": _cmd_user_set,
@@ -946,6 +970,17 @@ def _cmd_step_delete(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
     if task_name := args.get("task"):
         cmd.extend(["--task", task_name])
 
+    r = _run_plan_cmd(workspace_dir, cmd)
+    return _with_display(r, _fmt_step_list(r.get("result", {})))
+
+
+def _cmd_step_reorder(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """plan step reorder --order <list of step numbers in desired order>"""
+    order = args.get("order")
+    if not order or not isinstance(order, list):
+        return {"success": False, "error": "order is required (list of step numbers in desired order)"}
+
+    cmd = ["step", "reorder", "--order", ",".join(str(n) for n in order)]
     r = _run_plan_cmd(workspace_dir, cmd)
     return _with_display(r, _fmt_step_list(r.get("result", {})))
 

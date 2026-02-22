@@ -587,6 +587,74 @@ def _renumber_steps(conn, context_id: int) -> None:
         )
 
 
+def reorder_steps(conn, order: list[int], user_id=None, project_id=None) -> list[dict]:
+    """Reorder steps by reassigning sub_index values.
+
+    Args:
+        order: List of current sub_index values in desired new order.
+               Must contain ALL non-deleted step sub_index values exactly once.
+
+    Returns:
+        List of dicts with old_index, new_index, title for each step.
+    """
+    context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+
+    # Get all non-deleted steps for this context.
+    rows = conn.execute(
+        "SELECT id, sub_index, title FROM tasks "
+        "WHERE context_id = ? AND is_deleted = 0 "
+        "ORDER BY sub_index",
+        (context_id,),
+    ).fetchall()
+
+    existing = {int(r["sub_index"]): r for r in rows}
+
+    # Validate: order must contain exactly the same set of sub_index values.
+    order_set = set(order)
+    existing_set = set(existing.keys())
+    if order_set != existing_set:
+        missing = existing_set - order_set
+        extra = order_set - existing_set
+        parts = []
+        if missing:
+            parts.append(f"missing: {sorted(missing)}")
+        if extra:
+            parts.append(f"unknown: {sorted(extra)}")
+        raise ValueError(
+            f"Order must contain all {len(existing)} step numbers exactly once. {'; '.join(parts)}"
+        )
+
+    if len(order) != len(order_set):
+        raise ValueError("Order contains duplicate step numbers.")
+
+    # Two-pass reassignment to avoid unique index conflicts.
+    conn.execute("BEGIN")
+    try:
+        conn.execute(
+            "UPDATE tasks SET sub_index = NULL "
+            "WHERE context_id = ? AND is_deleted = 0",
+            (context_id,),
+        )
+        mapping = []
+        for new_idx, old_idx in enumerate(order, start=1):
+            row = existing[old_idx]
+            conn.execute(
+                "UPDATE tasks SET sub_index = ? WHERE id = ?",
+                (new_idx, row["id"]),
+            )
+            mapping.append({
+                "old_index": old_idx,
+                "new_index": new_idx,
+                "title": row["title"],
+            })
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return mapping
+
+
 VALID_NOTE_KINDS = ("goal", "plan", "note")
 
 
