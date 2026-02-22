@@ -80,6 +80,7 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_step_done` | Mark a step as complete |
 | `plan_step_new` | Add a step to a task |
 | `plan_step_delete` | Soft-delete a step |
+| `plan_step_reorder` | Reorder steps within a task |
 | `plan_step_notes_set` | Set a note on a step (upsert: updates by ID or creates new) |
 | `plan_step_notes_get` | View notes on a step (returns notes with IDs) |
 | `plan_step_notes_delete` | Delete a note from a step by ID |
@@ -367,6 +368,10 @@ schema_patches/    Incremental migrations (patch-4.sql through patch-10.sql)
 ## Inspired By
 
 This project was inspired by [Andreas Spiess](https://www.youtube.com/@AndreasSpiess) ([GitHub](https://github.com/SensorsIot)) and his [video on AI-assisted coding](https://www.youtube.com/watch?v=5DG0-_lseR4).
+
+## Release Notes
+
+See [RELEASE.md](RELEASE.md) for the full version history.
 
 ## License
 
