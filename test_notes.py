@@ -74,8 +74,8 @@ def make_test_db():
                  (1, None, now))
 
     # Add a task (step) for task note testing
-    conn.execute("INSERT INTO tasks (context_id, task_number, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                 (1, 1, "Step 1", "started", db_mod.utc_now_iso(), db_mod.utc_now_iso()))
+    conn.execute("INSERT INTO tasks (context_id, task_number, sub_index, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (1, 1, 1, "Step 1", "started", db_mod.utc_now_iso(), db_mod.utc_now_iso()))
     conn.execute("UPDATE context_state SET active_task_id = 1 WHERE context_id = 1")
 
     conn.commit()
@@ -344,6 +344,84 @@ def test_changelog_tracks_updates():
         cleanup(tmp)
 
 
+# ── Reorder tests ──
+
+def _make_multi_step_db():
+    """Create a DB with 3 steps for reorder testing."""
+    conn, tmp = make_test_db()
+    now = db_mod.utc_now_iso()
+    conn.execute("INSERT INTO tasks (context_id, task_number, sub_index, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (1, 2, 2, "Step 2", "planned", now, now))
+    conn.execute("INSERT INTO tasks (context_id, task_number, sub_index, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (1, 3, 3, "Step 3", "planned", now, now))
+    conn.commit()
+    return conn, tmp
+
+
+def test_reorder_valid():
+    """Reorder steps [3,1,2] moves step 3 to position 1."""
+    print("\n== Reorder valid ==")
+    conn, tmp = _make_multi_step_db()
+    try:
+        mapping = ctx_mod.reorder_steps(conn, [3, 1, 2], user_id=1, project_id=1)
+        report("returns mapping", len(mapping) == 3, f"count={len(mapping)}")
+        report("step 3 -> 1", mapping[0]["old_index"] == 3 and mapping[0]["new_index"] == 1)
+        report("step 1 -> 2", mapping[1]["old_index"] == 1 and mapping[1]["new_index"] == 2)
+        report("step 2 -> 3", mapping[2]["old_index"] == 2 and mapping[2]["new_index"] == 3)
+
+        # Verify DB state
+        rows = conn.execute("SELECT sub_index, title FROM tasks WHERE context_id = 1 AND is_deleted = 0 ORDER BY sub_index").fetchall()
+        report("new order correct", rows[0]["title"] == "Step 3" and rows[1]["title"] == "Step 1" and rows[2]["title"] == "Step 2")
+    finally:
+        conn.close()
+        cleanup(tmp)
+
+
+def test_reorder_partial_fails():
+    """Partial order list raises ValueError."""
+    print("\n== Reorder partial fails ==")
+    conn, tmp = _make_multi_step_db()
+    try:
+        try:
+            ctx_mod.reorder_steps(conn, [1, 2], user_id=1, project_id=1)
+            report("raises on partial", False, "no exception")
+        except ValueError:
+            report("raises on partial", True)
+    finally:
+        conn.close()
+        cleanup(tmp)
+
+
+def test_reorder_duplicate_fails():
+    """Duplicate step numbers raise ValueError."""
+    print("\n== Reorder duplicate fails ==")
+    conn, tmp = _make_multi_step_db()
+    try:
+        try:
+            ctx_mod.reorder_steps(conn, [1, 1, 2], user_id=1, project_id=1)
+            report("raises on duplicate", False, "no exception")
+        except ValueError:
+            report("raises on duplicate", True)
+    finally:
+        conn.close()
+        cleanup(tmp)
+
+
+def test_reorder_unknown_fails():
+    """Unknown step number raises ValueError."""
+    print("\n== Reorder unknown fails ==")
+    conn, tmp = _make_multi_step_db()
+    try:
+        try:
+            ctx_mod.reorder_steps(conn, [1, 2, 99], user_id=1, project_id=1)
+            report("raises on unknown", False, "no exception")
+        except ValueError:
+            report("raises on unknown", True)
+    finally:
+        conn.close()
+        cleanup(tmp)
+
+
 if __name__ == "__main__":
     test_context_note_insert()
     test_context_note_upsert_by_kind()
@@ -359,6 +437,10 @@ if __name__ == "__main__":
     test_step_summary_includes_notes()
     test_plan_show_includes_notes()
     test_changelog_tracks_updates()
+    test_reorder_valid()
+    test_reorder_partial_fails()
+    test_reorder_duplicate_fails()
+    test_reorder_unknown_fails()
 
     print(f"\n{'=' * 50}")
     print(f"RESULTS: {passed} passed, {failed} failed, {passed + failed} total")
