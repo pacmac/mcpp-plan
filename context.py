@@ -1715,9 +1715,19 @@ def get_step_summary(conn, step_number=None, user_id=None, project_id=None, **kw
 
 
 def delete_step(conn, step_number, task_ref=None, user_id=None, project_id=None):
-    """Delete a step by sub_index."""
-    task_number = _step_task_number(conn, step_number, user_id=user_id, project_id=project_id)
-    return delete_task(conn, task_number, context_ref=task_ref, user_id=user_id, project_id=project_id)
+    """Delete a step by sub_index, then NULL its sub_index and renumber remaining steps."""
+    context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+    task_id, task_number = _resolve_step_by_subindex(conn, context_id, step_number)
+    delete_task(conn, task_number, context_ref=task_ref, user_id=user_id, project_id=project_id)
+    conn.execute("BEGIN")
+    try:
+        conn.execute("UPDATE tasks SET sub_index = NULL WHERE id = ?", (task_id,))
+        _renumber_steps(conn, context_id)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return task_id
 
 
 def add_step_note(conn, note_md, step_number=None, user_id=None, project_id=None, kind="note", note_id=None):
@@ -1739,12 +1749,12 @@ def list_step_notes(conn, step_number=None, user_id=None, project_id=None, kind=
     return list_task_notes(conn, task_number=step_number, user_id=user_id, project_id=project_id, kind=kind)
 
 
-def create_step(conn, context_ref=None, title="", description_md=None,
+def create_step(conn, context_ref, title, description_md=None,
                  user_id=None, project_id=None, **kw):
     """Create a step and return (step_id, sub_index)."""
-    task_id, _task_number = create_task(
-        conn, context_ref=context_ref, title=title,
-        description_md=description_md, user_id=user_id, project_id=project_id, **kw
+    task_id, _task_number = _orig_create_task(
+        conn, context_ref, title, description_md=description_md,
+        user_id=user_id, project_id=project_id, **kw
     )
     row = conn.execute("SELECT sub_index FROM tasks WHERE id = ?", (task_id,)).fetchone()
     return task_id, int(row["sub_index"])
