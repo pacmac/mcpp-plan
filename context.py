@@ -1466,13 +1466,25 @@ def _insert_tasks(conn, context_id: int, tasks: list[TaskInput], now: str) -> li
     ).fetchone()
     max_num = row["max_num"] if row else None
     task_number_counter = int(max_num) if max_num is not None else 0
+
+    # Get current max sub_index for top-level tasks.
+    sub_row = conn.execute(
+        "SELECT MAX(sub_index) AS max_sub FROM tasks "
+        "WHERE context_id = ? AND is_deleted = 0",
+        (context_id,),
+    ).fetchone()
+    sub_index_counter = int(sub_row["max_sub"]) if sub_row and sub_row["max_sub"] is not None else 0
+
     for idx, task in enumerate(tasks):
         sort_index = task.sort_index
         sub_index = task.sub_index
         if task.parent_id is None and sort_index is None:
             top_level_counter += 1
             sort_index = top_level_counter
-        if task.parent_id is not None and sub_index is None:
+        if task.parent_id is None and sub_index is None:
+            sub_index_counter += 1
+            sub_index = sub_index_counter
+        elif task.parent_id is not None and sub_index is None:
             current = child_counter.get(task.parent_id, 0) + 1
             child_counter[task.parent_id] = current
             sub_index = current
