@@ -120,7 +120,7 @@ def _fmt_step_list(data: dict) -> str:
 
 
 def _fmt_step_show(data: dict) -> str:
-    num = data.get("task_number", "?")
+    num = data.get("sub_index") or data.get("task_number", "?")
     title = data.get("title", "?")
     status = data.get("status", "?")
     desc = data.get("description_md")

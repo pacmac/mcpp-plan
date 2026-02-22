@@ -1122,19 +1122,20 @@ def get_plan_show(conn, context_ref: str | int | None = None, user_id: int | Non
     ).fetchone()
 
     tasks = conn.execute(
-        "SELECT id, task_number, title, description_md, status, is_deleted "
-        "FROM tasks WHERE context_id = ? ORDER BY task_number",
+        "SELECT id, sub_index AS task_number, title, description_md, status, is_deleted "
+        "FROM tasks WHERE context_id = ? AND is_deleted = 0 AND sub_index IS NOT NULL "
+        "ORDER BY sub_index",
         (context_id,),
     ).fetchall()
 
     active_task_number = None
     if state_row and state_row["active_task_id"]:
         active_row = conn.execute(
-            "SELECT task_number FROM tasks WHERE id = ?",
+            "SELECT sub_index FROM tasks WHERE id = ?",
             (state_row["active_task_id"],),
         ).fetchone()
         if active_row:
-            active_task_number = active_row["task_number"]
+            active_task_number = active_row["sub_index"]
 
     # Fetch goal and plan notes for inline display
     goal_plan_rows = conn.execute(
@@ -1198,11 +1199,11 @@ def get_plan_status(conn, context_ref: str | int | None = None, user_id: int | N
     active_task_number = None
     if state_row and state_row["active_task_id"]:
         active_row = conn.execute(
-            "SELECT task_number FROM tasks WHERE id = ?",
+            "SELECT sub_index FROM tasks WHERE id = ?",
             (state_row["active_task_id"],),
         ).fetchone()
         if active_row:
-            active_task_number = active_row["task_number"]
+            active_task_number = active_row["sub_index"]
 
     return {
         "context_id": context_id,
@@ -1241,7 +1242,7 @@ def list_contexts(conn, user_id: int | None = None, show_all_users: bool = False
 
     rows = conn.execute(
         "SELECT c.id, c.name, c.status, c.description_md, c.user_id, "
-        "t.task_number, t.title "
+        "t.sub_index AS task_number, t.title "
         "FROM contexts c "
         "LEFT JOIN context_state s ON s.context_id = c.id "
         "LEFT JOIN tasks t ON t.id = s.active_task_id"
@@ -1284,15 +1285,16 @@ def list_tasks(conn, context_ref: str | int | None = None, user_id: int | None =
     if not context_row:
         raise ValueError(f"Context {context_id} not found.")
     active_row = conn.execute(
-        "SELECT t.task_number FROM context_state s "
+        "SELECT t.sub_index FROM context_state s "
         "JOIN tasks t ON t.id = s.active_task_id "
         "WHERE s.context_id = ?",
         (context_id,),
     ).fetchone()
-    active_task_number = active_row["task_number"] if active_row else None
+    active_task_number = active_row["sub_index"] if active_row else None
     rows = conn.execute(
-        "SELECT task_number, title, status, is_deleted FROM tasks WHERE context_id = ? "
-        "ORDER BY task_number",
+        "SELECT task_number, sub_index, title, status, is_deleted FROM tasks WHERE context_id = ? "
+        "AND is_deleted = 0 AND sub_index IS NOT NULL "
+        "ORDER BY sub_index",
         (context_id,),
     ).fetchall()
     return {
@@ -1302,9 +1304,11 @@ def list_tasks(conn, context_ref: str | int | None = None, user_id: int | None =
         "active_task_number": active_task_number,
         "tasks": [
             {
-                **dict(row),
-                "is_active": row["task_number"] == active_task_number,
-                "is_deleted": bool(row["is_deleted"]),
+                "task_number": row["sub_index"],
+                "title": row["title"],
+                "status": row["status"],
+                "is_active": row["sub_index"] == active_task_number,
+                "is_deleted": False,
             }
             for row in rows
         ],
@@ -1808,8 +1812,9 @@ def get_project_report_data(
 
         # Steps detail
         steps = conn.execute(
-            "SELECT task_number, title, status, description_md, is_deleted "
-            "FROM tasks WHERE context_id = ? ORDER BY task_number",
+            "SELECT sub_index AS task_number, title, status, description_md, is_deleted "
+            "FROM tasks WHERE context_id = ? AND is_deleted = 0 AND sub_index IS NOT NULL "
+            "ORDER BY sub_index",
             (ctx_id,),
         ).fetchall()
 
@@ -1874,22 +1879,21 @@ def get_task_report_data(
 
     # Steps with their notes
     steps = conn.execute(
-        "SELECT id, task_number, title, description_md, status, is_deleted "
-        "FROM tasks WHERE context_id = ? ORDER BY task_number",
+        "SELECT id, sub_index, title, description_md, status "
+        "FROM tasks WHERE context_id = ? AND is_deleted = 0 AND sub_index IS NOT NULL "
+        "ORDER BY sub_index",
         (context_id,),
     ).fetchall()
 
     steps_data = []
     for s in steps:
-        if s["is_deleted"]:
-            continue
         step_notes = conn.execute(
             "SELECT note_md, created_at, kind FROM task_notes "
             "WHERE task_id = ? ORDER BY id",
             (s["id"],),
         ).fetchall()
         steps_data.append({
-            "number": s["task_number"],
+            "number": s["sub_index"],
             "title": s["title"],
             "status": s["status"],
             "description": s["description_md"],
@@ -1904,11 +1908,11 @@ def get_task_report_data(
     active_step_num = None
     if state_row and state_row["active_task_id"]:
         active_row = conn.execute(
-            "SELECT task_number FROM tasks WHERE id = ?",
+            "SELECT sub_index FROM tasks WHERE id = ?",
             (state_row["active_task_id"],),
         ).fetchone()
         if active_row:
-            active_step_num = active_row["task_number"]
+            active_step_num = active_row["sub_index"]
 
     return {
         "context_id": context_id,
