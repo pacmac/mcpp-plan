@@ -166,8 +166,6 @@ def create_task(
             else resolve_context_id(conn, context_ref, project_id=project_id)
         )
 
-        if parent_id is None and sub_index is not None:
-            raise ValueError("sub_index requires parent_id.")
         if parent_id is not None and sort_index is not None:
             raise ValueError("sort_index is only valid for top-level tasks.")
 
@@ -190,10 +188,11 @@ def create_task(
             max_sort = row["max_sort"] if row else None
             sort_index = (int(max_sort) if max_sort is not None else 0) + 1
 
-        if parent_id is not None and sub_index is None:
+        if sub_index is None:
             row = conn.execute(
-                "SELECT MAX(sub_index) AS max_sub FROM tasks WHERE parent_id = ?",
-                (parent_id,),
+                "SELECT MAX(sub_index) AS max_sub FROM tasks "
+                "WHERE context_id = ? AND is_deleted = 0",
+                (context_id,),
             ).fetchone()
             max_sub = row["max_sub"] if row else None
             sub_index = (int(max_sub) if max_sub is not None else 0) + 1
