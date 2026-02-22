@@ -546,19 +546,20 @@ def _resolve_task_id_by_number(
     return int(row["id"])
 
 
-def _resolve_step_id_by_subindex(
+def _resolve_step_by_subindex(
     conn,
     context_id: int,
     sub_index: int,
-) -> int:
-    """Resolve a step's sub_index to its task id (non-deleted only)."""
+) -> tuple[int, int]:
+    """Resolve a step's sub_index to (task_id, task_number) for non-deleted steps."""
     row = conn.execute(
-        "SELECT id FROM tasks WHERE context_id = ? AND sub_index = ? AND is_deleted = 0",
+        "SELECT id, task_number FROM tasks "
+        "WHERE context_id = ? AND sub_index = ? AND is_deleted = 0",
         (context_id, sub_index),
     ).fetchone()
     if not row:
         raise ValueError(f"Step {sub_index} not found in context {context_id}.")
-    return int(row["id"])
+    return int(row["id"]), int(row["task_number"])
 
 
 def _renumber_steps(conn, context_id: int) -> None:
@@ -1680,24 +1681,49 @@ list_task_notes_on_task = list_context_notes
 
 
 # ── Step-level (was task) ──
-# Simple aliases where positional args match:
+# Step adapters resolve sub_index → task_number, then delegate to task functions.
+
 list_steps = _orig_list_tasks
-switch_step = _orig_switch_task
-complete_step = complete_task
+
+
+def _step_task_number(conn, step_number, user_id=None, project_id=None):
+    """Resolve step_number (sub_index) to task_number for the active context."""
+    context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+    _task_id, task_number = _resolve_step_by_subindex(conn, context_id, step_number)
+    return task_number
+
+
+def switch_step(conn, step_number, context_ref=None, actor=None, user_id=None, project_id=None):
+    """Switch active step by sub_index."""
+    task_number = _step_task_number(conn, step_number, user_id=user_id, project_id=project_id)
+    return switch_task(conn, task_number, context_ref=context_ref, actor=actor,
+                       user_id=user_id, project_id=project_id)
+
+
+def complete_step(conn, step_number, context_ref=None, actor=None, user_id=None, project_id=None):
+    """Complete a step by sub_index."""
+    task_number = _step_task_number(conn, step_number, user_id=user_id, project_id=project_id)
+    return complete_task(conn, task_number, context_ref=context_ref, actor=actor,
+                         user_id=user_id, project_id=project_id)
 
 
 def get_step_summary(conn, step_number=None, user_id=None, project_id=None, **kw):
-    """Adapter: step_number → task_number."""
+    """Get step summary by sub_index."""
+    if step_number is not None:
+        step_number = _step_task_number(conn, step_number, user_id=user_id, project_id=project_id)
     return get_task_summary(conn, task_number=step_number, user_id=user_id, project_id=project_id, **kw)
 
 
 def delete_step(conn, step_number, task_ref=None, user_id=None, project_id=None):
-    """Adapter: task_ref → context_ref."""
-    return delete_task(conn, step_number, context_ref=task_ref, user_id=user_id, project_id=project_id)
+    """Delete a step by sub_index."""
+    task_number = _step_task_number(conn, step_number, user_id=user_id, project_id=project_id)
+    return delete_task(conn, task_number, context_ref=task_ref, user_id=user_id, project_id=project_id)
 
 
 def add_step_note(conn, note_md, step_number=None, user_id=None, project_id=None, kind="note", note_id=None):
-    """Adapter: step_number → task_number."""
+    """Add a note to a step by sub_index."""
+    if step_number is not None:
+        step_number = _step_task_number(conn, step_number, user_id=user_id, project_id=project_id)
     return add_task_note(conn, note_md, task_number=step_number, user_id=user_id, project_id=project_id, kind=kind, note_id=note_id)
 
 
@@ -1707,11 +1733,21 @@ def delete_step_note(conn, note_id: int) -> None:
 
 
 def list_step_notes(conn, step_number=None, user_id=None, project_id=None, kind=None):
-    """Adapter: step_number → task_number."""
+    """List notes on a step by sub_index."""
+    if step_number is not None:
+        step_number = _step_task_number(conn, step_number, user_id=user_id, project_id=project_id)
     return list_task_notes(conn, task_number=step_number, user_id=user_id, project_id=project_id, kind=kind)
 
 
-create_step = _orig_create_task  # already returns (step_id, step_number)
+def create_step(conn, context_ref=None, title="", description_md=None,
+                 user_id=None, project_id=None, **kw):
+    """Create a step and return (step_id, sub_index)."""
+    task_id, _task_number = create_task(
+        conn, context_ref=context_ref, title=title,
+        description_md=description_md, user_id=user_id, project_id=project_id, **kw
+    )
+    row = conn.execute("SELECT sub_index FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    return task_id, int(row["sub_index"])
 
 
 # ── Report data gathering ──
