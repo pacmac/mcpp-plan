@@ -1696,8 +1696,8 @@ def _step_task_number(conn, step_number, user_id=None, project_id=None):
 def switch_step(conn, step_number, context_ref=None, actor=None, user_id=None, project_id=None):
     """Switch active step by sub_index."""
     task_number = _step_task_number(conn, step_number, user_id=user_id, project_id=project_id)
-    return switch_task(conn, task_number, context_ref=context_ref, actor=actor,
-                       user_id=user_id, project_id=project_id)
+    return _orig_switch_task(conn, task_number, context_ref=context_ref, actor=actor,
+                             user_id=user_id, project_id=project_id)
 
 
 def complete_step(conn, step_number, context_ref=None, actor=None, user_id=None, project_id=None):
