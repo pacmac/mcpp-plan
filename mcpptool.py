@@ -603,6 +603,14 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_task_report": _cmd_task_report,
         # Utility
         "plan_readme": _cmd_readme,
+        # Git operations
+        "plan_checkpoint": _cmd_checkpoint,
+        "plan_commit": _cmd_commit,
+        "plan_push": _cmd_push,
+        "plan_restore": _cmd_restore,
+        "plan_log": _cmd_log,
+        "plan_status": _cmd_status,
+        "plan_diff": _cmd_diff,
     }
 
     handler = tool_map.get(tool_name)
@@ -1295,3 +1303,447 @@ def _cmd_readme(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
 
     content = readme_path.read_text(encoding="utf-8")
     return {"success": True, "result": content}
+
+
+# ── Git command handlers ──
+
+def _load_git_mod():
+    """Import the git module."""
+    import importlib.util
+    pkg_path = _pkg_path()
+    spec = importlib.util.spec_from_file_location("mcpp_plan.git", pkg_path / "git.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["mcpp_plan.git"] = mod
+    if spec.loader:
+        spec.loader.exec_module(mod)
+    return mod
+
+
+def _get_active_context_info(plan_db_mod, plan_ctx, conn, user_id, project_id):
+    """Get active task name and active step number/title for git tagging."""
+    context_id = plan_ctx.resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+    context_row = conn.execute(
+        "SELECT name FROM contexts WHERE id = ?", (context_id,)
+    ).fetchone()
+    task_name = context_row["name"] if context_row else None
+
+    state_row = conn.execute(
+        "SELECT active_task_id FROM context_state WHERE context_id = ?", (context_id,)
+    ).fetchone()
+    step_number = None
+    step_title = None
+    if state_row and state_row["active_task_id"]:
+        step_row = conn.execute(
+            "SELECT sub_index, title FROM tasks WHERE id = ?",
+            (state_row["active_task_id"],)
+        ).fetchone()
+        if step_row:
+            step_number = step_row["sub_index"]
+            step_title = step_row["title"]
+
+    return task_name, step_number, step_title
+
+
+def _cmd_checkpoint(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Save current state as a checkpoint commit."""
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    git_mod = _load_git_mod()
+    conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+
+    try:
+        user_name = plan_db_mod.get_os_user()
+        task_name, step_number, step_title = _get_active_context_info(
+            plan_db_mod, plan_ctx, conn, user_id, project_id
+        )
+
+        if git_mod.is_clean(workspace_dir):
+            return {"success": False, "error": "Nothing to checkpoint — working tree is clean."}
+
+        message = args.get("message")
+        if not message:
+            if step_number and step_title:
+                message = f"checkpoint: step {step_number} — {step_title}"
+            elif task_name:
+                message = f"checkpoint: {task_name}"
+            else:
+                message = "checkpoint"
+
+        tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
+        full_message = git_mod.build_message(message, tag)
+
+        git_mod.add_all(workspace_dir)
+        sha = git_mod.commit(workspace_dir, full_message)
+        files = git_mod.diff_stat(workspace_dir, sha)
+
+        display = f"Checkpoint **{sha[:8]}**\n"
+        if files:
+            display += f"{len(files)} file(s): {', '.join(files)}"
+
+        return {
+            "success": True,
+            "result": {"sha": sha, "files": files, "message": message},
+            "display": display,
+        }
+    finally:
+        conn.close()
+
+
+def _cmd_commit(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Commit with a meaningful message."""
+    message = args.get("message")
+    if not message:
+        return {"success": False, "error": "message is required"}
+
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    git_mod = _load_git_mod()
+    conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+
+    try:
+        user_name = plan_db_mod.get_os_user()
+        task_name, step_number, _ = _get_active_context_info(
+            plan_db_mod, plan_ctx, conn, user_id, project_id
+        )
+
+        if git_mod.is_clean(workspace_dir):
+            return {"success": False, "error": "Nothing to commit — working tree is clean."}
+
+        tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
+        full_message = git_mod.build_message(message, tag)
+
+        git_mod.add_all(workspace_dir)
+        sha = git_mod.commit(workspace_dir, full_message)
+        files = git_mod.diff_stat(workspace_dir, sha)
+
+        display = f"Committed **{sha[:8]}**: {message}\n"
+        if files:
+            display += f"{len(files)} file(s): {', '.join(files)}"
+
+        return {
+            "success": True,
+            "result": {"sha": sha, "files": files, "message": message},
+            "display": display,
+        }
+    finally:
+        conn.close()
+
+
+def _cmd_push(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Pull (fast-forward only) then push."""
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    git_mod = _load_git_mod()
+
+    if not git_mod.has_remote(workspace_dir):
+        return {"success": False, "error": "No remote configured."}
+
+    ok, msg = git_mod.pull_ff_only(workspace_dir)
+    if not ok:
+        return {
+            "success": False,
+            "error": f"Pull failed (remote has diverged): {msg}",
+            "display": f"Pull failed: {msg}\nResolve manually before pushing.",
+        }
+
+    ok, msg = git_mod.push(workspace_dir)
+    if not ok:
+        return {"success": False, "error": f"Push failed: {msg}"}
+
+    branch = git_mod.current_branch(workspace_dir)
+    display = f"Pushed **{branch}** to remote."
+    return {"success": True, "result": {"branch": branch, "message": msg}, "display": display}
+
+
+def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Restore (reverse-commit) a previous checkpoint."""
+    sha = args.get("sha")
+    if not sha:
+        return {"success": False, "error": "sha is required"}
+
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    git_mod = _load_git_mod()
+    conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+
+    try:
+        user_name = plan_db_mod.get_os_user()
+
+        # Verify the commit has an mcpp tag belonging to current user
+        commit_msg = git_mod.get_commit_message(workspace_dir, sha)
+        tag = git_mod.parse_tag(commit_msg)
+        if not tag:
+            return {"success": False, "error": f"Commit {sha[:8]} has no mcpp tag — cannot verify ownership."}
+        if tag.user != user_name:
+            return {"success": False, "error": f"Commit {sha[:8]} belongs to user '{tag.user}', not '{user_name}'."}
+
+        # Get files changed in that commit
+        files = git_mod.diff_stat(workspace_dir, sha)
+        if not files:
+            return {"success": False, "error": f"Commit {sha[:8]} has no file changes."}
+
+        # Check which files have been modified by OTHER users since
+        skipped = []
+        safe_files = []
+        for filepath in files:
+            subsequent = git_mod.log_file_since(workspace_dir, sha, filepath)
+            other_users = set()
+            for entry in subsequent:
+                entry_tag = entry.get("tag")
+                if entry_tag and entry_tag.user and entry_tag.user != user_name:
+                    other_users.add(entry_tag.user)
+            if other_users:
+                skipped.append({"file": filepath, "users": sorted(other_users)})
+            else:
+                safe_files.append(filepath)
+
+        if not safe_files:
+            skip_display = "\n".join(
+                f"  - {s['file']} (modified by {', '.join(s['users'])})" for s in skipped
+            )
+            return {
+                "success": False,
+                "error": "All files in this commit were modified by other users since.",
+                "display": f"Cannot restore {sha[:8]} — all files modified by others:\n{skip_display}",
+            }
+
+        # Generate reverse patch, filtered to safe files
+        full_patch = git_mod.reverse_patch(workspace_dir, sha)
+        if not full_patch.strip():
+            return {"success": False, "error": f"Could not generate reverse patch for {sha[:8]}."}
+
+        filtered_patch = git_mod.filter_patch_by_files(full_patch, set(safe_files))
+        if not filtered_patch.strip():
+            return {"success": False, "error": "Filtered patch is empty after removing conflicting files."}
+
+        # Apply the patch
+        ok, apply_msg = git_mod.apply_patch(workspace_dir, filtered_patch)
+        if not ok:
+            return {"success": False, "error": f"Patch failed to apply: {apply_msg}"}
+
+        # Commit the revert
+        original_subject = git_mod.strip_tag(commit_msg).split("\n")[0]
+        task_name, step_number, _ = _get_active_context_info(
+            plan_db_mod, plan_ctx, conn, user_id, project_id
+        )
+        revert_tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
+        revert_message = git_mod.build_message(f"revert: {original_subject}", revert_tag)
+
+        git_mod.add_all(workspace_dir)
+        revert_sha = git_mod.commit(workspace_dir, revert_message)
+
+        # Build display
+        display_lines = [f"Reverted **{sha[:8]}** as **{revert_sha[:8]}**"]
+        display_lines.append(f"Files restored: {', '.join(safe_files)}")
+        if skipped:
+            display_lines.append("Files skipped (modified by other users):")
+            for s in skipped:
+                display_lines.append(f"  - {s['file']} ({', '.join(s['users'])})")
+
+        return {
+            "success": True,
+            "result": {
+                "original_sha": sha,
+                "revert_sha": revert_sha,
+                "restored_files": safe_files,
+                "skipped_files": skipped,
+            },
+            "display": "\n".join(display_lines),
+        }
+    finally:
+        conn.close()
+
+
+def _cmd_log(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Show commit history filtered by user/task/step."""
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    git_mod = _load_git_mod()
+    conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+
+    try:
+        user_filter = args.get("user")
+        task_filter = args.get("task")
+        step_filter = args.get("step")
+        show_all = args.get("show_all", False)
+        max_count = args.get("max_count", 50)
+
+        # Default: current user's commits for active task
+        if not show_all and not user_filter:
+            user_filter = plan_db_mod.get_os_user()
+        if not show_all and not task_filter:
+            try:
+                task_name, _, _ = _get_active_context_info(
+                    plan_db_mod, plan_ctx, conn, user_id, project_id
+                )
+                task_filter = task_name
+            except Exception:
+                pass
+
+        entries = git_mod.log(workspace_dir, max_count=max_count)
+
+        # Filter by mcpp tag
+        filtered = []
+        for e in entries:
+            tag = e.get("tag")
+            if not show_all and not tag:
+                continue
+            if user_filter and (not tag or tag.user != user_filter):
+                continue
+            if task_filter and (not tag or tag.task != task_filter):
+                continue
+            if step_filter is not None and (not tag or tag.step != step_filter):
+                continue
+            filtered.append(e)
+
+        # Format display
+        if not filtered:
+            return {"success": True, "result": {"entries": []}, "display": "No matching commits."}
+
+        lines = [f"**Log** ({len(filtered)} commits)"]
+        for e in filtered:
+            sha_short = e["sha"][:8]
+            tag = e.get("tag")
+            user_str = tag.user if tag else e["author"]
+            subject = git_mod.strip_tag(f"{e['subject']}\n{e['body']}").split("\n")[0]
+            date_short = e["date"][:10]
+            step_str = f" step {tag.step}" if tag and tag.step else ""
+            lines.append(f"  {sha_short} {date_short} [{user_str}{step_str}] {subject}")
+
+        result_entries = []
+        for e in filtered:
+            tag = e.get("tag")
+            result_entries.append({
+                "sha": e["sha"],
+                "date": e["date"],
+                "user": tag.user if tag else e["author"],
+                "task": tag.task if tag else None,
+                "step": tag.step if tag else None,
+                "subject": git_mod.strip_tag(f"{e['subject']}\n{e['body']}").split("\n")[0],
+            })
+
+        return {
+            "success": True,
+            "result": {"entries": result_entries},
+            "display": "\n".join(lines),
+        }
+    finally:
+        conn.close()
+
+
+def _cmd_status(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Show uncommitted changes with user ownership annotations."""
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    git_mod = _load_git_mod()
+
+    entries = git_mod.status_porcelain(workspace_dir)
+    if not entries:
+        return {"success": True, "result": {"files": []}, "display": "Working tree is clean."}
+
+    # Annotate each file with last committer from mcpp tags
+    annotated = []
+    for e in entries:
+        filepath = e["path"]
+        last_user = None
+        # Check last commit that touched this file
+        try:
+            recent = git_mod.log(workspace_dir, max_count=5)
+            for commit_entry in recent:
+                files_in_commit = git_mod.diff_stat(workspace_dir, commit_entry["sha"])
+                if filepath in files_in_commit:
+                    tag = commit_entry.get("tag")
+                    if tag and tag.user:
+                        last_user = tag.user
+                    break
+        except Exception:
+            pass
+
+        annotated.append({
+            "status": e["status"],
+            "path": filepath,
+            "last_user": last_user,
+        })
+
+    # Format
+    status_map = {"M": "modified", "A": "added", "D": "deleted", "??": "new", "MM": "modified"}
+    lines = [f"**Status** ({len(annotated)} files)"]
+    for a in annotated:
+        status_label = status_map.get(a["status"], a["status"])
+        user_str = f" [{a['last_user']}]" if a["last_user"] else ""
+        lines.append(f"  {status_label}: {a['path']}{user_str}")
+
+    return {
+        "success": True,
+        "result": {"files": annotated},
+        "display": "\n".join(lines),
+    }
+
+
+def _cmd_diff(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Show diff between checkpoints or since last checkpoint."""
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    git_mod = _load_git_mod()
+
+    from_ref = args.get("from")
+    to_ref = args.get("to")
+
+    if from_ref and to_ref:
+        # Diff between two specific refs
+        diff_text = git_mod.diff_range(workspace_dir, from_ref, to_ref)
+    elif from_ref:
+        # Diff from ref to working tree
+        diff_text = git_mod.diff_working(workspace_dir, from_ref)
+    else:
+        # Diff since last mcpp checkpoint for current user/task
+        conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+        try:
+            user_name = plan_db_mod.get_os_user()
+            task_name = None
+            try:
+                task_name, _, _ = _get_active_context_info(
+                    plan_db_mod, plan_ctx, conn, user_id, project_id
+                )
+            except Exception:
+                pass
+
+            entries = git_mod.log(workspace_dir, max_count=100)
+            last_sha = None
+            for e in entries:
+                tag = e.get("tag")
+                if tag and tag.user == user_name:
+                    if task_name is None or tag.task == task_name:
+                        last_sha = e["sha"]
+                        break
+
+            if last_sha:
+                diff_text = git_mod.diff_working(workspace_dir, last_sha)
+            else:
+                diff_text = git_mod.diff_working(workspace_dir, "HEAD")
+        finally:
+            conn.close()
+
+    if not diff_text.strip():
+        return {"success": True, "result": {"diff": ""}, "display": "No differences."}
+
+    # Truncate for display if very long
+    display = diff_text
+    if len(display) > 5000:
+        display = display[:5000] + f"\n... ({len(diff_text)} chars total, truncated)"
+
+    return {
+        "success": True,
+        "result": {"diff": diff_text},
+        "display": f"```diff\n{display}\n```",
+    }

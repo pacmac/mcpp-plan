@@ -340,6 +340,83 @@ tools:
           type: string
           description: "Task name (omit for active task)"
 
+  # ── Version control ──
+  - name: plan_checkpoint
+    description: "Save current state as a checkpoint. Captures all uncommitted changes with an automatic or custom message."
+    inputSchema:
+      type: object
+      properties:
+        message:
+          type: string
+          description: "Optional checkpoint message (auto-generated from active step if omitted)"
+
+  - name: plan_commit
+    description: "Save changes with a meaningful message. Use for completed work you want to keep."
+    inputSchema:
+      type: object
+      properties:
+        message:
+          type: string
+          description: "Commit message describing the changes"
+      required:
+        - message
+
+  - name: plan_push
+    description: "Share saved changes with other users. Pulls latest changes first, then pushes."
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_restore
+    description: "Undo a previous checkpoint by creating a reverse change. Files modified by other users since will be skipped with a warning."
+    inputSchema:
+      type: object
+      properties:
+        sha:
+          type: string
+          description: "The checkpoint ID to restore (from plan_log output)"
+      required:
+        - sha
+
+  - name: plan_log
+    description: "Show history of saved checkpoints and commits. Defaults to current user and active task."
+    inputSchema:
+      type: object
+      properties:
+        user:
+          type: string
+          description: "Filter by user (omit for current user)"
+        task:
+          type: string
+          description: "Filter by task name (omit for active task)"
+        step:
+          type: integer
+          description: "Filter by step number"
+        show_all:
+          type: boolean
+          description: "Show all users and tasks (default: false)"
+        max_count:
+          type: integer
+          description: "Maximum number of entries (default: 50)"
+
+  - name: plan_status
+    description: "Show uncommitted changes and which user last modified each file."
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_diff
+    description: "Show what changed since last checkpoint, or between two specific points."
+    inputSchema:
+      type: object
+      properties:
+        from:
+          type: string
+          description: "Starting checkpoint ID (omit for last checkpoint)"
+        to:
+          type: string
+          description: "Ending checkpoint ID (omit for current working state)"
+
   # ── Utility ──
   - name: plan_readme
     description: "Fetch the plan README and display it IN FULL to the user. The result text must be printed completely in your response -- do not summarize, truncate, or paraphrase. The user is reading it to learn how the system works."
