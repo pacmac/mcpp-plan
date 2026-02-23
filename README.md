@@ -108,6 +108,22 @@ All tools are exposed via MCP with the `plan_` prefix.
 
 Reports are written to the workspace directory with date-stamped filenames (e.g. `project_report_260215.md`, `task_report_build-auth_260215.md`). Same-day files are overwritten.
 
+### Version control tools
+
+| Tool | Description |
+|------|-------------|
+| `plan_checkpoint` | Save current state as a checkpoint (auto-names from active step) |
+| `plan_commit` | Save changes with a meaningful message |
+| `plan_push` | Share saved changes with other users (pulls first, then pushes) |
+| `plan_restore` | Undo a previous checkpoint (reverse commit, skips files modified by others) |
+| `plan_log` | Show history of checkpoints and commits (filterable by user/task/step) |
+| `plan_status` | Show uncommitted changes with user ownership annotations |
+| `plan_diff` | Show what changed since last checkpoint or between two points |
+
+Commits include a structured tag (`[mcpp:user=...,task=...,step=...]`) that associates each commit with its mcpp-plan context. This is transparent to the agent — it just calls `plan_checkpoint` or `plan_commit` and the tagging happens automatically.
+
+**Multi-user safety:** `plan_restore` generates a reverse commit rather than rewriting history. If another user has modified any of the files since the checkpoint, those files are skipped with a warning — no silent data loss.
+
 ### Config tools
 
 | Tool | Description |
@@ -344,11 +360,12 @@ This keeps your current flow intact while making sure the thought doesn't get lo
 tool.yaml          MCP tool definitions (schema for all plan_* tools)
 mcpptool.py        MCP entry point -- routes tool calls to Python API
 context.py         Business logic (create/switch/complete tasks and steps)
+git.py             Version control operations (checkpoint, commit, push, restore, log, status, diff)
 config.py          Global configuration (config.yaml loading + defaults)
 db.py              SQLite connection, schema management, user/project helpers
 backup.py          Migration safety pipeline (verified backup, trial-on-copy, row validation)
 schema.sql         Base schema
-schema_patches/    Incremental migrations (patch-4.sql through patch-10.sql)
+schema_patches/    Incremental migrations (patch-4.sql through patch-11.sql)
 ```
 
 ### Entry points

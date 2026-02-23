@@ -4,6 +4,14 @@ Version number derived from git tag count (`v1.N`).
 
 ---
 
+## v1.27 — 2026-02-23
+
+- Add multi-user version control tools: `plan_checkpoint`, `plan_commit`, `plan_push`, `plan_restore`, `plan_log`, `plan_status`, `plan_diff`
+- New `git.py` module — wraps git operations with user/task/step awareness via structured commit message tags
+- `plan_restore` uses reverse commits (forward-only history) and skips files modified by other users since the checkpoint
+- Agent-facing tool names avoid "git" — agents see save/restore semantics, not VCS internals
+- Add `test_git.py` with 36 tests covering tag parsing, multi-user restore, push, and edge cases
+
 ## v1.26 — 2026-02-22
 
 - Add `plan_step_reorder` tool — reassign step order with a single call
