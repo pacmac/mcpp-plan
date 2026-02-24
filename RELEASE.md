@@ -4,6 +4,15 @@ Version number derived from git tag count (`v1.N`).
 
 ---
 
+## v1.28 — 2026-02-24
+
+- Add feature toggles: `enable_steps` and `enable_versioning` in config.yaml
+- When disabled: tools hidden from MCP discovery, calls blocked with clear errors, step data stripped from results and display
+- Steps always exist internally (state machine integrity) but are hidden from output when disabled
+- New `toolfilter.py` — framework discovery hook to exclude disabled tools from `tools/list`
+- Add 54 integration tests for feature toggle behavior (RX blocking, TX stripping, discovery filtering)
+- Update README with Feature Toggles section and defaults table
+
 ## v1.27 — 2026-02-23
 
 - Add multi-user version control tools: `plan_checkpoint`, `plan_commit`, `plan_push`, `plan_restore`, `plan_log`, `plan_status`, `plan_diff`
