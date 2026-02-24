@@ -41,13 +41,26 @@ mcpp-plan is an [mcpp](https://github.com/pacmac/mcpp) tool module. Install it b
 
 ### Setup
 
-1. Clone or copy this directory into your mcpp tools path:
+1. Clone both repos as siblings:
 
 ```bash
-git clone <repo-url> /path/to/mcpp-plan
+cd ~/projects
+git clone git@github.com:pacmac/mcpp.git
+git clone git@github.com:pacmac/mcpp-plan.git
 ```
 
-2. Register it with mcpp by adding the tool path to your configuration. The `tool.yaml` in this directory declares all available MCP tools.
+mcpp's default `tools.yaml` already includes `../mcpp-plan`, so no extra configuration is needed if they're side by side.
+
+2. Register the MCP server with Claude Code:
+
+```bash
+claude mcp add mcpp --scope user \
+  --env MCPP_LOG_LEVEL=error \
+  --env MCPP_TIMEOUT_SECONDS=30 \
+  -- python3 ~/projects/mcpp/mcpp.py
+```
+
+Replace `~/projects` with your install folder.
 
 3. The database is created automatically as `plan.db` in the module directory on first use. No setup required.
 
