@@ -22,10 +22,10 @@ mcpp's default `tools.yaml` already includes `../mcpp-plan`, so no configuration
 ## 2. Register with Claude Code (1 min)
 
 ```bash
-claude mcp add mympc --scope user \
-  --env MYMPC_LOG_LEVEL=error \
-  --env MYMPC_TIMEOUT_SECONDS=30 \
-  -- python3 ~/projects/mcpp/wrapper.py
+claude mcp add mcpp --scope user \
+  --env MCPP_LOG_LEVEL=error \
+  --env MCPP_TIMEOUT_SECONDS=30 \
+  -- python3 ~/projects/mcpp/mcpp.py
 ```
 
 Replace `~/projects` with your install folder.
