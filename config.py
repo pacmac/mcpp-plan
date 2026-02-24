@@ -16,8 +16,33 @@ DEFAULTS: dict[str, Any] = {
         "allow_reopen_completed": False,
         "daily_backup": True,
         "backup_retain_days": 7,
+        "enable_steps": True,
+        "enable_versioning": True,
     },
 }
+
+STEP_TOOLS: frozenset[str] = frozenset({
+    "plan_step_switch", "plan_step_show", "plan_step_list",
+    "plan_step_done", "plan_step_notes_set", "plan_step_notes_get",
+    "plan_step_notes_delete", "plan_step_new", "plan_step_delete",
+    "plan_step_reorder",
+})
+
+VERSIONING_TOOLS: frozenset[str] = frozenset({
+    "plan_checkpoint", "plan_commit", "plan_push",
+    "plan_restore", "plan_log", "plan_status", "plan_diff",
+})
+
+
+def disabled_tools() -> frozenset[str]:
+    """Return tool names that should be disabled based on config toggles."""
+    cfg = get_config().get("workflow", {})
+    result: set[str] = set()
+    if not cfg.get("enable_steps", True):
+        result |= STEP_TOOLS
+    if not cfg.get("enable_versioning", True):
+        result |= VERSIONING_TOOLS
+    return frozenset(result)
 
 
 def _deep_merge(defaults: dict, overrides: dict) -> dict:

@@ -1,7 +1,7 @@
-"""Optional tool filter for mcpp framework discovery.
+"""Tool filter for mcpp-plan feature toggles.
 
-Returns tool names that should be excluded from MCP tool listings
-based on config.yaml feature toggles.
+Returns tool names to exclude from MCP discovery
+based on enable_steps/enable_versioning in config.yaml.
 """
 
 from __future__ import annotations

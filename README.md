@@ -274,7 +274,24 @@ workflow:
   allow_reopen_completed: false    # allow switching to completed tasks (reopens them)
   daily_backup: true               # create one backup per day on first use
   backup_retain_days: 7            # delete backups older than this many days
+  enable_steps: true               # set false to hide step tools and strip step data
+  enable_versioning: true          # set false to hide git versioning tools
 ```
+
+### Feature Toggles
+
+Disable features you don't need:
+
+```yaml
+workflow:
+  enable_steps: false        # hide step tools, strip step data from results
+  enable_versioning: false   # hide git versioning tools (checkpoint, commit, push, etc.)
+```
+
+Both default to `true`. When disabled:
+- Tools are hidden from MCP discovery (`tools/list`)
+- Direct calls return a clear error: `"Tool 'X' is disabled (enable_Y: false in config.yaml)"`
+- Step data is stripped from task results and display text
 
 ### Defaults
 
@@ -284,6 +301,8 @@ workflow:
 | `workflow` | `allow_reopen_completed` | `false` | Allow switching to completed tasks (sets them back to active) |
 | `workflow` | `daily_backup` | `true` | Create one backup per day on first use |
 | `workflow` | `backup_retain_days` | `7` | Delete backups older than this many days |
+| `workflow` | `enable_steps` | `true` | Set `false` to hide step tools and strip step data |
+| `workflow` | `enable_versioning` | `true` | Set `false` to hide git versioning tools |
 
 ### Behavior
 

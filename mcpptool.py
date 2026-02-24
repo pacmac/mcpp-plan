@@ -119,6 +119,23 @@ def _fmt_step_list(data: dict) -> str:
     return "\n".join(lines)
 
 
+def _display_task_no_steps(r: dict) -> str:
+    """Regenerate task display without step info."""
+    lines = [f"**{r.get('context_name', '?')}**: {r.get('context_title', '')}"]
+    if g := r.get("goal"):
+        lines.append(f"  **Goal**: {g}")
+    if p := r.get("plan"):
+        lines.append(f"  **Plan**: {p}")
+    if notes := r.get("notes"):
+        lines.append(_fmt_notes(notes, "Task notes"))
+    return "\n".join(lines)
+
+
+def _display_status_no_steps(r: dict) -> str:
+    """Regenerate status display without step info."""
+    return f"**{r.get('context_name', '?')}**: {r.get('context_title', '')}"
+
+
 def _fmt_step_show(data: dict) -> str:
     num = data.get("sub_index") or data.get("task_number", "?")
     title = data.get("title", "?")
@@ -155,6 +172,16 @@ def get_info(context: dict[str, Any] | None = None) -> dict[str, Any]:
         "existing_tasks": existing_tasks,
         "tip": "Ask 'what am I working on?' to see current state"
     }
+
+
+def _load_config_mod():
+    """Load config module standalone (no dependency on _load_pkg)."""
+    import importlib.util as ilu
+    cfg_path = Path(__file__).resolve().parent / "config.py"
+    spec = ilu.spec_from_file_location("_plan_config_rx", str(cfg_path))
+    mod = ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
 
 
 def _pkg_path() -> Path:
@@ -617,6 +644,13 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
     if not handler:
         return {"success": False, "error": f"Unknown tool: {tool_name}"}
 
+    # RX filter: block disabled feature tools
+    _cfg_mod = _load_config_mod()
+    _blocked = _cfg_mod.disabled_tools()
+    if tool_name in _blocked:
+        feature = "steps" if tool_name in _cfg_mod.STEP_TOOLS else "versioning"
+        return {"success": False, "error": f"Tool '{tool_name}' is disabled (enable_{feature}: false in config.yaml)"}
+
     try:
         result = handler(workspace_dir, arguments)
         if not result.get("success"):
@@ -651,6 +685,27 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
                     _project_nudge_sent = True
         except Exception:
             pass
+
+        # TX filter: strip step data when steps disabled
+        cfg = _load_config_mod().get_config().get("workflow", {})
+        if not cfg.get("enable_steps", True) and isinstance(result.get("result"), dict):
+            r = result["result"]
+            tasks = r.get("tasks")
+            if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
+                if "task_number" in tasks[0]:
+                    del r["tasks"]
+                else:
+                    for entry in tasks:
+                        entry.pop("active_task_number", None)
+                        entry.pop("active_task_title", None)
+            for k in ("active_task_number", "active_task_title",
+                       "planned_count", "started_count", "completed_count",
+                       "blocked_count", "deleted_count"):
+                r.pop(k, None)
+            if tool_name in {"plan_task_show", "plan_task_new", "plan_task_adopt"}:
+                result["display"] = _display_task_no_steps(r)
+            elif tool_name in {"plan_task_status", "plan_task_switch"}:
+                result["display"] = _display_status_no_steps(r)
 
         return result
     except Exception as e:
