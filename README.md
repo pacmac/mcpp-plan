@@ -64,6 +64,43 @@ Replace `~/projects` with your install folder.
 
 3. The database is created automatically as `plan.db` in the module directory on first use. No setup required.
 
+### Git SSH setup (multi-user)
+
+When using `plan_push` / `plan_commit`, git runs inside the MCP server process — not in the user's interactive shell. For SSH-based remotes to work, each user needs an SSH key that authenticates without an agent or passphrase prompt.
+
+1. Generate a key (no passphrase):
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_myuser -N ""
+```
+
+2. Add it to your Git hosting provider (GitHub, GitLab, etc.) under your account's SSH keys.
+
+3. Create or edit `~/.ssh/config`:
+
+```
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_myuser
+  IdentitiesOnly yes
+```
+
+4. Accept the host key:
+
+```bash
+ssh -T git@github.com
+```
+
+5. Verify the remote uses SSH (not HTTPS):
+
+```bash
+git remote -v
+# Should show: git@github.com:yourorg/yourrepo.git
+```
+
+**Common pitfall:** If `Host` doesn't match exactly what git uses (e.g. `Host github.com-work` instead of `Host github.com`), SSH won't find the key and push will fail with `Permission denied (publickey)`.
+
 ## Tools
 
 All tools are exposed via MCP with the `plan_` prefix.
