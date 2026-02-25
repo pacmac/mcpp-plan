@@ -9,8 +9,10 @@ No database imports — pure git operations.
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -96,8 +98,14 @@ class GitError(Exception):
         self.stderr = stderr
 
 
+_log = logging.getLogger("mcpp.git")
+
+
 def _run(args: list[str], cwd: str | Path, check: bool = True) -> subprocess.CompletedProcess:
     """Run a git command and return the result."""
+    cmd_str = f"git {' '.join(args)}"
+    _log.debug("running: %s", cmd_str)
+    t0 = time.monotonic()
     result = subprocess.run(
         ["git"] + args,
         cwd=str(cwd),
@@ -105,7 +113,15 @@ def _run(args: list[str], cwd: str | Path, check: bool = True) -> subprocess.Com
         text=True,
         timeout=30,
     )
+    elapsed = time.monotonic() - t0
+    if elapsed > 2:
+        _log.warning("%s took %.1fs", cmd_str, elapsed)
+    else:
+        _log.debug("%s completed in %.1fs (rc=%d)", cmd_str, elapsed, result.returncode)
+    if result.stderr.strip():
+        _log.debug("%s stderr: %s", cmd_str, result.stderr.strip())
     if check and result.returncode != 0:
+        _log.error("%s failed (rc=%d): %s", cmd_str, result.returncode, result.stderr.strip())
         raise GitError(
             f"git {' '.join(args)} failed: {result.stderr.strip()}",
             returncode=result.returncode,

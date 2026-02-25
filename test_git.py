@@ -1,5 +1,6 @@
-"""Tests for git.py — tag parsing, git operations, multi-user scenarios."""
+"""Tests for git.py — tag parsing, git operations, multi-user scenarios, logging."""
 
+import logging
 import os
 import subprocess
 import tempfile
@@ -373,3 +374,109 @@ class TestEdgeCases:
 
         d = diff_range(git_repo, sha1, sha2)
         assert "a.txt" in d
+
+
+# ── Logging tests ──
+
+class TestGitLogging:
+    def test_run_logs_command(self, git_repo, caplog):
+        """_run() logs the git command being executed."""
+        import logging
+        with caplog.at_level(logging.DEBUG, logger="mcpp.git"):
+            status_porcelain(git_repo)
+        assert any("running: git status --porcelain" in r.message for r in caplog.records)
+
+    def test_run_logs_completion_time(self, git_repo, caplog):
+        """_run() logs completion time for successful commands."""
+        import logging
+        with caplog.at_level(logging.DEBUG, logger="mcpp.git"):
+            status_porcelain(git_repo)
+        assert any("completed in" in r.message and "rc=0" in r.message for r in caplog.records)
+
+    def test_run_logs_error(self, git_repo, caplog):
+        """_run() logs errors for failed git commands."""
+        import logging
+        with caplog.at_level(logging.DEBUG, logger="mcpp.git"):
+            try:
+                from git import _run
+                _run(["log", "--invalid-flag-xyz"], git_repo)
+            except GitError:
+                pass
+        assert any(r.levelno >= logging.ERROR for r in caplog.records)
+
+    def test_run_logs_stderr(self, git_repo, caplog):
+        """_run() logs stderr output when present."""
+        import logging
+        with caplog.at_level(logging.DEBUG, logger="mcpp.git"):
+            from git import _run
+            # git status on a clean repo may not produce stderr,
+            # but a failed command will
+            try:
+                _run(["log", "--invalid-flag-xyz"], git_repo)
+            except GitError:
+                pass
+        # At minimum the error log should contain stderr content
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert len(error_records) > 0
+
+
+class TestFileLogging:
+    def test_ensure_file_logging_creates_handler(self):
+        """_ensure_file_logging() adds a FileHandler to the mcpp logger."""
+        import mcpptool
+        # Reset the guard so we can test
+        original = mcpptool._log_file_configured
+        mcpptool._log_file_configured = False
+        logger = logging.getLogger("mcpp")
+        original_handlers = list(logger.handlers)
+        try:
+            mcpptool._ensure_file_logging()
+            new_handlers = [h for h in logger.handlers if h not in original_handlers]
+            assert len(new_handlers) == 1
+            assert isinstance(new_handlers[0], logging.FileHandler)
+        finally:
+            # Clean up: remove added handler, restore guard
+            for h in logger.handlers:
+                if h not in original_handlers:
+                    logger.removeHandler(h)
+                    h.close()
+            mcpptool._log_file_configured = original
+
+    def test_ensure_file_logging_guard_prevents_duplicates(self):
+        """Second call to _ensure_file_logging() does not add another handler."""
+        import mcpptool
+        original = mcpptool._log_file_configured
+        mcpptool._log_file_configured = False
+        logger = logging.getLogger("mcpp")
+        original_handlers = list(logger.handlers)
+        try:
+            mcpptool._ensure_file_logging()
+            count_after_first = len(logger.handlers)
+            mcpptool._ensure_file_logging()
+            count_after_second = len(logger.handlers)
+            assert count_after_first == count_after_second
+        finally:
+            for h in logger.handlers:
+                if h not in original_handlers:
+                    logger.removeHandler(h)
+                    h.close()
+            mcpptool._log_file_configured = original
+
+    def test_tool_log_writes_call_entry(self, tmp_path):
+        """_tool_log.debug produces a CALL entry with tool name and args."""
+        import mcpptool
+        handler = logging.FileHandler(str(tmp_path / "test.log"), encoding="utf-8")
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger = logging.getLogger("mcpp.tool")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        try:
+            mcpptool._tool_log.debug("CALL %s args=%s", "plan_test", {"key": "val"})
+            handler.flush()
+            content = (tmp_path / "test.log").read_text()
+            assert "CALL plan_test" in content
+            assert "key" in content
+        finally:
+            logger.removeHandler(handler)
+            handler.close()
