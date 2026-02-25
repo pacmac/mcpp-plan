@@ -422,33 +422,41 @@ class TestGitLogging:
 
 class TestFileLogging:
     def test_ensure_file_logging_creates_handler(self):
-        """_ensure_file_logging() adds a FileHandler to the mcpp logger."""
+        """_ensure_file_logging() adds a RotatingFileHandler to the mcpp logger."""
+        from logging.handlers import RotatingFileHandler
         import mcpptool
-        # Reset the guard so we can test
-        original = mcpptool._log_file_configured
-        mcpptool._log_file_configured = False
         logger = logging.getLogger("mcpp")
         original_handlers = list(logger.handlers)
+        # Remove any existing file handlers so we can test fresh
+        for h in logger.handlers:
+            if isinstance(h, (logging.FileHandler, RotatingFileHandler)):
+                logger.removeHandler(h)
+                h.close()
         try:
             mcpptool._ensure_file_logging()
             new_handlers = [h for h in logger.handlers if h not in original_handlers]
             assert len(new_handlers) == 1
-            assert isinstance(new_handlers[0], logging.FileHandler)
+            assert isinstance(new_handlers[0], RotatingFileHandler)
         finally:
-            # Clean up: remove added handler, restore guard
             for h in logger.handlers:
                 if h not in original_handlers:
                     logger.removeHandler(h)
                     h.close()
-            mcpptool._log_file_configured = original
+            # Restore originals
+            for h in original_handlers:
+                if h not in logger.handlers:
+                    logger.addHandler(h)
 
     def test_ensure_file_logging_guard_prevents_duplicates(self):
         """Second call to _ensure_file_logging() does not add another handler."""
+        from logging.handlers import RotatingFileHandler
         import mcpptool
-        original = mcpptool._log_file_configured
-        mcpptool._log_file_configured = False
         logger = logging.getLogger("mcpp")
         original_handlers = list(logger.handlers)
+        for h in logger.handlers:
+            if isinstance(h, (logging.FileHandler, RotatingFileHandler)):
+                logger.removeHandler(h)
+                h.close()
         try:
             mcpptool._ensure_file_logging()
             count_after_first = len(logger.handlers)
@@ -460,7 +468,9 @@ class TestFileLogging:
                 if h not in original_handlers:
                     logger.removeHandler(h)
                     h.close()
-            mcpptool._log_file_configured = original
+            for h in original_handlers:
+                if h not in logger.handlers:
+                    logger.addHandler(h)
 
     def test_tool_log_writes_call_entry(self, tmp_path):
         """_tool_log.debug produces a CALL entry with tool name and args."""

@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 _project_nudge_sent = False
-_log_file_configured = False
 
 
 # ── Display formatters ──
@@ -588,17 +587,19 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
 
 
 def _ensure_file_logging() -> None:
-    """Add a file handler to the mcpp logger, writing to plan.log in the module directory."""
-    global _log_file_configured
-    if _log_file_configured:
+    """Add a rotating file handler to the mcpp logger, writing to plan.log in the module directory."""
+    from logging.handlers import RotatingFileHandler
+    logger = logging.getLogger("mcpp")
+    # Check for existing file handler (survives module reimport)
+    if any(isinstance(h, (logging.FileHandler, RotatingFileHandler)) for h in logger.handlers):
         return
-    _log_file_configured = True
     try:
         log_file = Path(__file__).resolve().parent / "plan.log"
-        handler = logging.FileHandler(str(log_file), encoding="utf-8")
+        handler = RotatingFileHandler(
+            str(log_file), maxBytes=1_000_000, backupCount=3, encoding="utf-8",
+        )
         handler.setLevel(logging.DEBUG)
         handler.setFormatter(logging.Formatter("%(asctime)s %(process)d %(levelname)s %(name)s %(message)s"))
-        logger = logging.getLogger("mcpp")
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG)
     except Exception:
