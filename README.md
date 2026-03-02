@@ -179,7 +179,6 @@ Commits include a structured tag (`[mcpp:user=...,task=...,step=...]`) that asso
 | Tool | Description |
 |------|-------------|
 | `plan_config_show` | Show current configuration (merged defaults + overrides) |
-| `plan_config_set` | Set a configuration value (`section`, `key`, `value`) |
 
 ### Utility
 
@@ -367,7 +366,7 @@ All default to `true` except `enable_restore` (defaults to `false`). When disabl
 ### Tools
 
 - `plan_config_show` -- show current settings (merged defaults + overrides)
-- `plan_config_set` -- set a value: requires `section`, `key`, and `value` parameters
+- Config is read-only from MCP — edit `config.yaml` directly to change settings
 
 ## Migration safety
 

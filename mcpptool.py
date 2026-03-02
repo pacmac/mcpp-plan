@@ -648,7 +648,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_project_set": _cmd_project_set,
         # Config tools
         "plan_config_show": _cmd_config_show,
-        "plan_config_set": _cmd_config_set,
+        # plan_config_set removed — config is operator-only (edit config.yaml directly)
         # Task adoption
         "plan_task_adopt": _cmd_task_adopt,
         # Report tools
@@ -1162,21 +1162,6 @@ def _cmd_config_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                 lines.append(f"  - **{key}**: `{value}`{suffix}")
     return {"success": True, "result": cfg, "display": "\n".join(lines)}
 
-
-def _cmd_config_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Set a config key within a section."""
-    section = args.get("section")
-    key = args.get("key")
-    value = args.get("value")
-    if not section:
-        return {"success": False, "error": "section is required"}
-    if not key:
-        return {"success": False, "error": "key is required"}
-    if value is None:
-        return {"success": False, "error": "value is required"}
-    from mcpp_plan.config import set_config
-    cfg = set_config(section, key, value)
-    return {"success": True, "result": cfg, "display": f"Set **{section}.{key}** = `{value}`"}
 
 
 # ── Report command handlers ──

@@ -4,6 +4,13 @@ Version number derived from git tag count (`v1.N`).
 
 ---
 
+## v1.30 — 2026-03-02
+
+- Remove `plan_config_set` from MCP tools — config is operator-only, not agent-modifiable
+- Config controls security boundaries (feature toggles, workflow enforcement) so agents must not be able to change it
+- `plan_config_show` remains available for agents to read current config
+- Operators edit `config.yaml` directly to change settings
+
 ## v1.29 — 2026-03-02
 
 - Add `enable_restore` config toggle to disable `plan_restore` independently of other versioning tools
