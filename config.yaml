@@ -1,5 +1,6 @@
 workflow:
   allow_reopen_completed: true
+  enable_restore: false
   enable_steps: true
   enable_versioning: true
   require_goal_and_plan: true

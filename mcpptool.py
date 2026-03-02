@@ -674,7 +674,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
     _cfg_mod = _load_config_mod()
     _blocked = _cfg_mod.disabled_tools()
     if tool_name in _blocked:
-        feature = "steps" if tool_name in _cfg_mod.STEP_TOOLS else "versioning"
+        feature = "steps" if tool_name in _cfg_mod.STEP_TOOLS else "restore" if tool_name in _cfg_mod.RESTORE_TOOLS else "versioning"
         return {"success": False, "error": f"Tool '{tool_name}' is disabled (enable_{feature}: false in config.yaml)"}
 
     try:

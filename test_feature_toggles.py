@@ -91,6 +91,7 @@ def test_defaults():
     wf = cfg.DEFAULTS["workflow"]
     report("enable_steps defaults to True", wf["enable_steps"] is True)
     report("enable_versioning defaults to True", wf["enable_versioning"] is True)
+    report("enable_restore defaults to False", wf["enable_restore"] is False)
 
 
 def test_disabled_tools_steps_off():
@@ -99,6 +100,7 @@ def test_disabled_tools_steps_off():
     result = cfg.disabled_tools()
     report("steps off: all step tools disabled", cfg.STEP_TOOLS.issubset(result))
     report("steps off: no versioning tools", len(cfg.VERSIONING_TOOLS & result) == 0)
+    report("steps off: restore tools still disabled (default)", cfg.RESTORE_TOOLS.issubset(result))
 
 
 def test_disabled_tools_versioning_off():
@@ -107,6 +109,7 @@ def test_disabled_tools_versioning_off():
     result = cfg.disabled_tools()
     report("versioning off: all versioning tools disabled", cfg.VERSIONING_TOOLS.issubset(result))
     report("versioning off: no step tools", len(cfg.STEP_TOOLS & result) == 0)
+    report("versioning off: restore tools still disabled (default)", cfg.RESTORE_TOOLS.issubset(result))
 
 
 def test_disabled_tools_both_off():
@@ -114,14 +117,23 @@ def test_disabled_tools_both_off():
     cfg = _load_config()
     result = cfg.disabled_tools()
     expected = cfg.STEP_TOOLS | cfg.VERSIONING_TOOLS
-    report("both off: all toggled tools disabled", result == expected)
+    report("both off: all toggled tools disabled", expected.issubset(result))
+
+
+def test_disabled_tools_restore_off():
+    _write_config(enable_restore=False)
+    cfg = _load_config()
+    result = cfg.disabled_tools()
+    report("restore off: all restore tools disabled", cfg.RESTORE_TOOLS.issubset(result))
+    report("restore off: no step tools", len(cfg.STEP_TOOLS & result) == 0)
+    report("restore off: no versioning tools", len(cfg.VERSIONING_TOOLS & result) == 0)
 
 
 def test_disabled_tools_defaults():
     _write_config()
     cfg = _load_config()
     result = cfg.disabled_tools()
-    report("defaults: no tools disabled", len(result) == 0)
+    report("defaults: only restore tools disabled", result == cfg.RESTORE_TOOLS)
 
 
 def test_tool_sets():
@@ -129,7 +141,8 @@ def test_tool_sets():
     bad = [t for t in cfg.STEP_TOOLS if not t.startswith("plan_step_")]
     report("STEP_TOOLS all start with plan_step_", len(bad) == 0, f"bad: {bad}")
     report("STEP_TOOLS has 10 tools", len(cfg.STEP_TOOLS) == 10, f"got {len(cfg.STEP_TOOLS)}")
-    report("VERSIONING_TOOLS has 7 tools", len(cfg.VERSIONING_TOOLS) == 7, f"got {len(cfg.VERSIONING_TOOLS)}")
+    report("VERSIONING_TOOLS has 6 tools", len(cfg.VERSIONING_TOOLS) == 6, f"got {len(cfg.VERSIONING_TOOLS)}")
+    report("RESTORE_TOOLS has 1 tool", len(cfg.RESTORE_TOOLS) == 1, f"got {len(cfg.RESTORE_TOOLS)}")
 
 
 # ══════════════════════════════════════════════════════════
@@ -141,7 +154,8 @@ def test_toolfilter_defaults():
     spec = importlib.util.spec_from_file_location("_tf", str(MODULE_DIR / "toolfilter.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    report("toolfilter: no exclusions by default", len(mod.excluded_tools()) == 0)
+    cfg = _load_config()
+    report("toolfilter: only restore excluded by default", mod.excluded_tools() == cfg.RESTORE_TOOLS)
 
 
 def test_toolfilter_steps_off():
@@ -184,6 +198,17 @@ def test_rx_versioning_tools_blocked():
         r = _call(tool, {"message": "x", "sha": "x"})
         ok = not r.get("success") and "disabled" in r.get("error", "")
         report(f"RX blocks {tool}", ok, r.get("error", "")[:60])
+
+
+def test_rx_restore_tools_blocked():
+    _write_config(enable_restore=False)
+    cfg = _load_config()
+    for tool in sorted(cfg.RESTORE_TOOLS):
+        r = _call(tool, {"sha": "x"})
+        ok = not r.get("success") and "disabled" in r.get("error", "")
+        report(f"RX blocks {tool}", ok, r.get("error", "")[:60])
+        ok2 = "enable_restore" in r.get("error", "")
+        report(f"RX error mentions enable_restore", ok2, r.get("error", "")[:60])
 
 
 def test_rx_task_tools_not_blocked():
@@ -296,6 +321,7 @@ if __name__ == "__main__":
         print("\n-- Unit: disabled_tools --")
         test_disabled_tools_steps_off()
         test_disabled_tools_versioning_off()
+        test_disabled_tools_restore_off()
         test_disabled_tools_both_off()
         test_disabled_tools_defaults()
 
@@ -307,6 +333,7 @@ if __name__ == "__main__":
         print("\n-- Integration: RX filter --")
         test_rx_step_tools_blocked()
         test_rx_versioning_tools_blocked()
+        test_rx_restore_tools_blocked()
         test_rx_task_tools_not_blocked()
 
         print("\n-- Integration: Setup test task --")

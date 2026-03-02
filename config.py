@@ -18,6 +18,7 @@ DEFAULTS: dict[str, Any] = {
         "backup_retain_days": 7,
         "enable_steps": True,
         "enable_versioning": True,
+        "enable_restore": False,
     },
 }
 
@@ -30,7 +31,11 @@ STEP_TOOLS: frozenset[str] = frozenset({
 
 VERSIONING_TOOLS: frozenset[str] = frozenset({
     "plan_checkpoint", "plan_commit", "plan_push",
-    "plan_restore", "plan_log", "plan_status", "plan_diff",
+    "plan_log", "plan_status", "plan_diff",
+})
+
+RESTORE_TOOLS: frozenset[str] = frozenset({
+    "plan_restore",
 })
 
 
@@ -42,6 +47,8 @@ def disabled_tools() -> frozenset[str]:
         result |= STEP_TOOLS
     if not cfg.get("enable_versioning", True):
         result |= VERSIONING_TOOLS
+    if not cfg.get("enable_restore", True):
+        result |= RESTORE_TOOLS
     return frozenset(result)
 
 

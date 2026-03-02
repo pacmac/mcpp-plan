@@ -326,6 +326,7 @@ workflow:
   backup_retain_days: 7            # delete backups older than this many days
   enable_steps: true               # set false to hide step tools and strip step data
   enable_versioning: true          # set false to hide git versioning tools
+  enable_restore: false            # set true to enable plan_restore (revert checkpoints)
 ```
 
 ### Feature Toggles
@@ -336,9 +337,10 @@ Disable features you don't need:
 workflow:
   enable_steps: false        # hide step tools, strip step data from results
   enable_versioning: false   # hide git versioning tools (checkpoint, commit, push, etc.)
+  enable_restore: true       # enable plan_restore (disabled by default)
 ```
 
-Both default to `true`. When disabled:
+All default to `true` except `enable_restore` (defaults to `false`). When disabled:
 - Tools are hidden from MCP discovery (`tools/list`)
 - Direct calls return a clear error: `"Tool 'X' is disabled (enable_Y: false in config.yaml)"`
 - Step data is stripped from task results and display text
@@ -353,6 +355,7 @@ Both default to `true`. When disabled:
 | `workflow` | `backup_retain_days` | `7` | Delete backups older than this many days |
 | `workflow` | `enable_steps` | `true` | Set `false` to hide step tools and strip step data |
 | `workflow` | `enable_versioning` | `true` | Set `false` to hide git versioning tools |
+| `workflow` | `enable_restore` | `false` | Set `true` to enable `plan_restore` (revert checkpoints) |
 
 ### Behavior
 

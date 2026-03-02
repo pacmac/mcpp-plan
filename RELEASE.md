@@ -4,6 +4,14 @@ Version number derived from git tag count (`v1.N`).
 
 ---
 
+## v1.29 — 2026-03-02
+
+- Add `enable_restore` config toggle to disable `plan_restore` independently of other versioning tools
+- `plan_restore` now disabled by default — set `enable_restore: true` in config.yaml to re-enable
+- Move `plan_restore` from `VERSIONING_TOOLS` into its own `RESTORE_TOOLS` set
+- RX filter error message correctly reports `enable_restore` for restore tools
+- Add tests for restore toggle (unit + RX integration)
+
 ## v1.28 — 2026-02-24
 
 - Add feature toggles: `enable_steps` and `enable_versioning` in config.yaml
