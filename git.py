@@ -10,6 +10,7 @@ No database imports — pure git operations.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import time
@@ -264,10 +265,16 @@ def pull_ff_only(cwd: str | Path) -> tuple[bool, str]:
 
 
 def push(cwd: str | Path) -> tuple[bool, str]:
-    """Push to remote. Returns (success, message)."""
+    """Push to remote. Sets upstream tracking on first push. Returns (success, message)."""
     result = _run(["push"], cwd, check=False)
     if result.returncode == 0:
         return True, result.stderr.strip() or "Pushed successfully."
+    # If push failed because no upstream is set, try with -u
+    if "no upstream" in result.stderr.lower() or "has no upstream" in result.stderr.lower():
+        branch = current_branch(cwd)
+        result = _run(["push", "-u", "origin", branch], cwd, check=False)
+        if result.returncode == 0:
+            return True, result.stderr.strip() or f"Pushed {branch} (upstream set)."
     return False, result.stderr.strip()
 
 
@@ -324,6 +331,104 @@ def apply_patch(cwd: str | Path, patch: str) -> tuple[bool, str]:
     if result.returncode != 0:
         return False, result.stderr.strip()
     return True, "Patch applied."
+
+
+# ── Worktree management ──
+
+WORKTREE_DIR = ".worktrees"
+
+
+def worktree_path_for_user(repo_dir: str | Path, username: str) -> Path:
+    """Return the deterministic worktree path for a user."""
+    return Path(repo_dir) / WORKTREE_DIR / username
+
+
+def worktree_branch_for_user(username: str) -> str:
+    """Return the branch name for a user's worktree."""
+    return f"mcpp/{username}"
+
+
+def worktree_list(repo_dir: str | Path) -> list[dict]:
+    """Return list of worktrees: {path, branch, head}."""
+    result = _run(["worktree", "list", "--porcelain"], repo_dir)
+    worktrees = []
+    current: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            if current:
+                worktrees.append(current)
+                current = {}
+            continue
+        if line.startswith("worktree "):
+            current["path"] = line[len("worktree "):]
+        elif line.startswith("HEAD "):
+            current["head"] = line[len("HEAD "):]
+        elif line.startswith("branch "):
+            current["branch"] = line[len("branch "):]
+        elif line == "bare":
+            current["bare"] = True
+    if current:
+        worktrees.append(current)
+    return worktrees
+
+
+def worktree_add(repo_dir: str | Path, path: str | Path, branch: str) -> None:
+    """Create a new worktree with a new branch based on HEAD."""
+    _run(["worktree", "add", "-b", branch, str(path)], repo_dir)
+
+
+def merge_branch(cwd: str | Path, branch: str) -> tuple[bool, str]:
+    """Merge a branch into the current branch. Returns (success, message)."""
+    result = _run(["merge", branch, "--no-edit"], cwd, check=False)
+    if result.returncode == 0:
+        return True, result.stdout.strip() or "Merge successful."
+    return False, result.stderr.strip() or result.stdout.strip()
+
+
+def worktree_remove(repo_dir: str | Path, path: str | Path) -> None:
+    """Remove a worktree."""
+    _run(["worktree", "remove", str(path), "--force"], repo_dir)
+
+
+def worktree_exists(repo_dir: str | Path, path: str | Path) -> bool:
+    """Check if a worktree exists at the given path."""
+    for wt in worktree_list(repo_dir):
+        if wt.get("path") == str(Path(path).resolve()):
+            return True
+    return False
+
+
+def ensure_worktree(repo_dir: str | Path, username: str) -> Path:
+    """Ensure a worktree exists for a user, creating it if needed. Returns the worktree path."""
+    wt_path = worktree_path_for_user(repo_dir, username)
+    if worktree_exists(repo_dir, wt_path):
+        return wt_path
+    branch = worktree_branch_for_user(username)
+    wt_path.parent.mkdir(parents=True, exist_ok=True)
+    worktree_add(repo_dir, wt_path, branch)
+    _log.info("Created worktree for user %s at %s (branch %s)", username, wt_path, branch)
+    return wt_path
+
+
+def resolve_workspace(repo_dir: str | Path, username: str, enable_worktrees: bool) -> str:
+    """Resolve the working directory for git operations.
+
+    If worktrees are disabled or this is the repo owner (primary user),
+    returns repo_dir. Otherwise ensures a worktree exists and returns its path.
+    """
+    if not enable_worktrees:
+        return str(repo_dir)
+    # Primary user = owner of the repo directory
+    repo_path = Path(repo_dir)
+    try:
+        repo_owner_uid = repo_path.stat().st_uid
+        current_uid = os.getuid()
+        if current_uid == repo_owner_uid:
+            return str(repo_dir)
+    except OSError:
+        return str(repo_dir)
+    wt_path = ensure_worktree(repo_dir, username)
+    return str(wt_path)
 
 
 def filter_patch_by_files(patch: str, keep_files: set[str]) -> str:

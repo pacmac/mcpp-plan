@@ -661,6 +661,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_commit": _cmd_commit,
         "plan_push": _cmd_push,
         "plan_restore": _cmd_restore,
+        "plan_sync": _cmd_sync,
         "plan_log": _cmd_log,
         "plan_status": _cmd_status,
         "plan_diff": _cmd_diff,
@@ -1410,6 +1411,21 @@ def _get_active_context_info(plan_db_mod, plan_ctx, conn, user_id, project_id):
     return task_name, step_number, step_title
 
 
+def _resolve_git_dir(git_mod, workspace_dir: str) -> str:
+    """Resolve the git working directory for the current user.
+
+    Returns workspace_dir unchanged if worktrees are disabled or this is the
+    primary user. Otherwise returns a per-user worktree path.
+    """
+    cfg_mod = _load_config_mod()
+    cfg = cfg_mod.get_config().get("workflow", {})
+    if not cfg.get("enable_worktrees", False):
+        return workspace_dir
+    import os
+    username = (os.environ.get("USER") or os.environ.get("USERNAME") or "default").lower()
+    return git_mod.resolve_workspace(workspace_dir, username, True)
+
+
 def _cmd_checkpoint(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """Save current state as a checkpoint commit."""
     for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
@@ -1418,6 +1434,7 @@ def _cmd_checkpoint(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     git_mod = _load_git_mod()
     conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
 
     try:
         user_name = plan_db_mod.get_os_user()
@@ -1425,7 +1442,7 @@ def _cmd_checkpoint(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             plan_db_mod, plan_ctx, conn, user_id, project_id
         )
 
-        if git_mod.is_clean(workspace_dir):
+        if git_mod.is_clean(git_dir):
             return {"success": False, "error": "Nothing to checkpoint — working tree is clean."}
 
         message = args.get("message")
@@ -1440,9 +1457,9 @@ def _cmd_checkpoint(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
         full_message = git_mod.build_message(message, tag)
 
-        git_mod.add_all(workspace_dir)
-        sha = git_mod.commit(workspace_dir, full_message)
-        files = git_mod.diff_stat(workspace_dir, sha)
+        git_mod.add_all(git_dir)
+        sha = git_mod.commit(git_dir, full_message)
+        files = git_mod.diff_stat(git_dir, sha)
 
         display = f"Checkpoint **{sha[:8]}**\n"
         if files:
@@ -1469,6 +1486,7 @@ def _cmd_commit(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     git_mod = _load_git_mod()
     conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
 
     try:
         user_name = plan_db_mod.get_os_user()
@@ -1476,15 +1494,15 @@ def _cmd_commit(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             plan_db_mod, plan_ctx, conn, user_id, project_id
         )
 
-        if git_mod.is_clean(workspace_dir):
+        if git_mod.is_clean(git_dir):
             return {"success": False, "error": "Nothing to commit — working tree is clean."}
 
         tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
         full_message = git_mod.build_message(message, tag)
 
-        git_mod.add_all(workspace_dir)
-        sha = git_mod.commit(workspace_dir, full_message)
-        files = git_mod.diff_stat(workspace_dir, sha)
+        git_mod.add_all(git_dir)
+        sha = git_mod.commit(git_dir, full_message)
+        files = git_mod.diff_stat(git_dir, sha)
 
         display = f"Committed **{sha[:8]}**: {message}\n"
         if files:
@@ -1504,25 +1522,87 @@ def _cmd_push(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
         del sys.modules[stale]
     git_mod = _load_git_mod()
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
 
-    if not git_mod.has_remote(workspace_dir):
+    if not git_mod.has_remote(git_dir):
         return {"success": False, "error": "No remote configured."}
 
-    ok, msg = git_mod.pull_ff_only(workspace_dir)
+    ok, msg = git_mod.pull_ff_only(git_dir)
     if not ok:
-        return {
-            "success": False,
-            "error": f"Pull failed (remote has diverged): {msg}",
-            "display": f"Pull failed: {msg}\nResolve manually before pushing.",
-        }
+        # Skip pull failure if branch has no upstream yet (first push)
+        if "no tracking information" not in msg.lower() and "no such ref" not in msg.lower():
+            return {
+                "success": False,
+                "error": f"Pull failed (remote has diverged): {msg}",
+                "display": f"Pull failed: {msg}\nResolve manually before pushing.",
+            }
 
-    ok, msg = git_mod.push(workspace_dir)
+    ok, msg = git_mod.push(git_dir)
     if not ok:
         return {"success": False, "error": f"Push failed: {msg}"}
 
-    branch = git_mod.current_branch(workspace_dir)
+    branch = git_mod.current_branch(git_dir)
     display = f"Pushed **{branch}** to remote."
     return {"success": True, "result": {"branch": branch, "message": msg}, "display": display}
+
+
+def _cmd_sync(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Merge the current user's worktree branch into main and push."""
+    for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
+        del sys.modules[stale]
+    git_mod = _load_git_mod()
+    cfg_mod = _load_config_mod()
+    cfg = cfg_mod.get_config().get("workflow", {})
+
+    if not cfg.get("enable_worktrees", False):
+        return {"success": False, "error": "Worktrees are not enabled (enable_worktrees: false in config.yaml)."}
+
+    import os
+    username = (os.environ.get("USER") or os.environ.get("USERNAME") or "default").lower()
+    user_branch = git_mod.worktree_branch_for_user(username)
+
+    # All merge operations happen in the main repo dir, not the worktree
+    repo_dir = workspace_dir
+
+    # Verify the user branch exists
+    main_branch = git_mod.current_branch(repo_dir)
+
+    # Pull latest main first
+    if git_mod.has_remote(repo_dir):
+        ok, msg = git_mod.pull_ff_only(repo_dir)
+        if not ok:
+            return {
+                "success": False,
+                "error": f"Pull failed on {main_branch}: {msg}",
+                "display": f"Cannot sync — {main_branch} has diverged from remote.\nResolve manually.",
+            }
+
+    # Merge user branch into main
+    ok, msg = git_mod.merge_branch(repo_dir, user_branch)
+    if not ok:
+        # Abort the failed merge
+        git_mod._run(["merge", "--abort"], repo_dir, check=False)
+        return {
+            "success": False,
+            "error": f"Merge of {user_branch} into {main_branch} failed: {msg}",
+            "display": f"Merge conflict — {user_branch} could not be cleanly merged into {main_branch}.\nResolve manually.",
+        }
+
+    # Push if remote exists
+    push_msg = ""
+    if git_mod.has_remote(repo_dir):
+        ok, push_result = git_mod.push(repo_dir)
+        if not ok:
+            push_msg = f"\nPush failed: {push_result}"
+        else:
+            push_msg = "\nPushed to remote."
+
+    display = f"Merged **{user_branch}** into **{main_branch}**.{push_msg}"
+    return {
+        "success": True,
+        "result": {"user_branch": user_branch, "main_branch": main_branch},
+        "display": display,
+    }
 
 
 def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -1537,12 +1617,13 @@ def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     git_mod = _load_git_mod()
     conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
 
     try:
         user_name = plan_db_mod.get_os_user()
 
         # Verify the commit has an mcpp tag belonging to current user
-        commit_msg = git_mod.get_commit_message(workspace_dir, sha)
+        commit_msg = git_mod.get_commit_message(git_dir, sha)
         tag = git_mod.parse_tag(commit_msg)
         if not tag:
             return {"success": False, "error": f"Commit {sha[:8]} has no mcpp tag — cannot verify ownership."}
@@ -1550,7 +1631,7 @@ def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             return {"success": False, "error": f"Commit {sha[:8]} belongs to user '{tag.user}', not '{user_name}'."}
 
         # Get files changed in that commit
-        files = git_mod.diff_stat(workspace_dir, sha)
+        files = git_mod.diff_stat(git_dir, sha)
         if not files:
             return {"success": False, "error": f"Commit {sha[:8]} has no file changes."}
 
@@ -1558,7 +1639,7 @@ def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         skipped = []
         safe_files = []
         for filepath in files:
-            subsequent = git_mod.log_file_since(workspace_dir, sha, filepath)
+            subsequent = git_mod.log_file_since(git_dir, sha, filepath)
             other_users = set()
             for entry in subsequent:
                 entry_tag = entry.get("tag")
@@ -1580,7 +1661,7 @@ def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             }
 
         # Generate reverse patch, filtered to safe files
-        full_patch = git_mod.reverse_patch(workspace_dir, sha)
+        full_patch = git_mod.reverse_patch(git_dir, sha)
         if not full_patch.strip():
             return {"success": False, "error": f"Could not generate reverse patch for {sha[:8]}."}
 
@@ -1589,7 +1670,7 @@ def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             return {"success": False, "error": "Filtered patch is empty after removing conflicting files."}
 
         # Apply the patch
-        ok, apply_msg = git_mod.apply_patch(workspace_dir, filtered_patch)
+        ok, apply_msg = git_mod.apply_patch(git_dir, filtered_patch)
         if not ok:
             return {"success": False, "error": f"Patch failed to apply: {apply_msg}"}
 
@@ -1601,8 +1682,8 @@ def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         revert_tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
         revert_message = git_mod.build_message(f"revert: {original_subject}", revert_tag)
 
-        git_mod.add_all(workspace_dir)
-        revert_sha = git_mod.commit(workspace_dir, revert_message)
+        git_mod.add_all(git_dir)
+        revert_sha = git_mod.commit(git_dir, revert_message)
 
         # Build display
         display_lines = [f"Reverted **{sha[:8]}** as **{revert_sha[:8]}**"]
@@ -1634,6 +1715,7 @@ def _cmd_log(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     git_mod = _load_git_mod()
     conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
 
     try:
         user_filter = args.get("user")
@@ -1654,7 +1736,7 @@ def _cmd_log(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             except Exception:
                 pass
 
-        entries = git_mod.log(workspace_dir, max_count=max_count)
+        entries = git_mod.log(git_dir, max_count=max_count)
 
         # Filter by mcpp tag
         filtered = []
@@ -1710,8 +1792,9 @@ def _cmd_status(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
         del sys.modules[stale]
     git_mod = _load_git_mod()
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
 
-    entries = git_mod.status_porcelain(workspace_dir)
+    entries = git_mod.status_porcelain(git_dir)
     if not entries:
         return {"success": True, "result": {"files": []}, "display": "Working tree is clean."}
 
@@ -1722,9 +1805,9 @@ def _cmd_status(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         last_user = None
         # Check last commit that touched this file
         try:
-            recent = git_mod.log(workspace_dir, max_count=5)
+            recent = git_mod.log(git_dir, max_count=5)
             for commit_entry in recent:
-                files_in_commit = git_mod.diff_stat(workspace_dir, commit_entry["sha"])
+                files_in_commit = git_mod.diff_stat(git_dir, commit_entry["sha"])
                 if filepath in files_in_commit:
                     tag = commit_entry.get("tag")
                     if tag and tag.user:
@@ -1761,16 +1844,17 @@ def _cmd_diff(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     pkg_path = _pkg_path()
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     git_mod = _load_git_mod()
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
 
     from_ref = args.get("from")
     to_ref = args.get("to")
 
     if from_ref and to_ref:
         # Diff between two specific refs
-        diff_text = git_mod.diff_range(workspace_dir, from_ref, to_ref)
+        diff_text = git_mod.diff_range(git_dir, from_ref, to_ref)
     elif from_ref:
         # Diff from ref to working tree
-        diff_text = git_mod.diff_working(workspace_dir, from_ref)
+        diff_text = git_mod.diff_working(git_dir, from_ref)
     else:
         # Diff since last mcpp checkpoint for current user/task
         conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
@@ -1784,7 +1868,7 @@ def _cmd_diff(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             except Exception:
                 pass
 
-            entries = git_mod.log(workspace_dir, max_count=100)
+            entries = git_mod.log(git_dir, max_count=100)
             last_sha = None
             for e in entries:
                 tag = e.get("tag")
@@ -1794,9 +1878,9 @@ def _cmd_diff(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
                         break
 
             if last_sha:
-                diff_text = git_mod.diff_working(workspace_dir, last_sha)
+                diff_text = git_mod.diff_working(git_dir, last_sha)
             else:
-                diff_text = git_mod.diff_working(workspace_dir, "HEAD")
+                diff_text = git_mod.diff_working(git_dir, "HEAD")
         finally:
             conn.close()
 

@@ -367,6 +367,12 @@ tools:
       type: object
       properties: {}
 
+  - name: plan_sync
+    description: "Merge your worktree branch into main and push. Only available when enable_worktrees is true."
+    inputSchema:
+      type: object
+      properties: {}
+
   - name: plan_restore
     description: "Undo a previous checkpoint by creating a reverse change. Files modified by other users since will be skipped with a warning."
     inputSchema:

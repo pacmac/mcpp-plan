@@ -19,6 +19,7 @@ DEFAULTS: dict[str, Any] = {
         "enable_steps": True,
         "enable_versioning": True,
         "enable_restore": False,
+        "enable_worktrees": False,
     },
 }
 
@@ -30,7 +31,7 @@ STEP_TOOLS: frozenset[str] = frozenset({
 })
 
 VERSIONING_TOOLS: frozenset[str] = frozenset({
-    "plan_checkpoint", "plan_commit", "plan_push",
+    "plan_checkpoint", "plan_commit", "plan_push", "plan_sync",
     "plan_log", "plan_status", "plan_diff",
 })
 

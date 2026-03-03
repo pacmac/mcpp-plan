@@ -32,6 +32,16 @@ from git import (
     has_remote,
     get_commit_message,
     log_file_since,
+    worktree_path_for_user,
+    worktree_branch_for_user,
+    worktree_list,
+    worktree_add,
+    worktree_remove,
+    worktree_exists,
+    ensure_worktree,
+    resolve_workspace,
+    merge_branch,
+    WORKTREE_DIR,
 )
 
 
@@ -490,3 +500,105 @@ class TestFileLogging:
         finally:
             logger.removeHandler(handler)
             handler.close()
+
+
+# ── Worktree tests ──
+
+class TestWorktreePaths:
+    def test_worktree_path_for_user(self):
+        path = worktree_path_for_user("/srv/project", "alice")
+        assert path == Path("/srv/project/.worktrees/alice")
+
+    def test_worktree_branch_for_user(self):
+        assert worktree_branch_for_user("alice") == "mcpp/alice"
+
+    def test_resolve_workspace_disabled(self, git_repo):
+        result = resolve_workspace(str(git_repo), "alice", enable_worktrees=False)
+        assert result == str(git_repo)
+
+    def test_resolve_workspace_primary_user(self, git_repo):
+        """Primary user (repo owner) should get the repo dir, not a worktree."""
+        result = resolve_workspace(str(git_repo), "testuser", enable_worktrees=True)
+        # tmp_path is owned by current user, so we are the primary user
+        assert result == str(git_repo)
+
+
+class TestWorktreeOperations:
+    def test_worktree_list_initial(self, git_repo):
+        """Fresh repo has one worktree (the main one)."""
+        wts = worktree_list(git_repo)
+        assert len(wts) >= 1
+
+    def test_worktree_add_and_exists(self, git_repo):
+        wt_path = git_repo / ".worktrees" / "alice"
+        worktree_add(git_repo, wt_path, "mcpp/alice")
+        assert wt_path.exists()
+        assert worktree_exists(git_repo, wt_path)
+
+    def test_worktree_remove(self, git_repo):
+        wt_path = git_repo / ".worktrees" / "alice"
+        worktree_add(git_repo, wt_path, "mcpp/alice")
+        assert worktree_exists(git_repo, wt_path)
+        worktree_remove(git_repo, wt_path)
+        assert not worktree_exists(git_repo, wt_path)
+
+    def test_ensure_worktree_creates(self, git_repo):
+        wt_path = ensure_worktree(git_repo, "bob")
+        assert wt_path.exists()
+        assert worktree_exists(git_repo, wt_path)
+        assert current_branch(wt_path) == "mcpp/bob"
+
+    def test_ensure_worktree_idempotent(self, git_repo):
+        wt1 = ensure_worktree(git_repo, "bob")
+        wt2 = ensure_worktree(git_repo, "bob")
+        assert wt1 == wt2
+
+    def test_worktree_isolation(self, git_repo):
+        """Changes in one worktree don't appear in another."""
+        wt_alice = ensure_worktree(git_repo, "alice")
+        wt_bob = ensure_worktree(git_repo, "bob")
+
+        # Alice writes a file
+        (wt_alice / "alice_file.txt").write_text("alice\n")
+        add_all(wt_alice)
+        commit(wt_alice, "alice commit")
+
+        # Bob should not see it
+        assert not (wt_bob / "alice_file.txt").exists()
+        assert is_clean(wt_bob)
+
+    def test_worktree_independent_branches(self, git_repo):
+        wt_alice = ensure_worktree(git_repo, "alice")
+        wt_bob = ensure_worktree(git_repo, "bob")
+        assert current_branch(wt_alice) == "mcpp/alice"
+        assert current_branch(wt_bob) == "mcpp/bob"
+
+
+class TestMergeBranch:
+    def test_merge_success(self, git_repo):
+        wt = ensure_worktree(git_repo, "alice")
+        (wt / "new.txt").write_text("from alice\n")
+        add_all(wt)
+        commit(wt, "alice adds file")
+
+        # Merge alice's branch into main
+        ok, msg = merge_branch(git_repo, "mcpp/alice")
+        assert ok
+        assert (git_repo / "new.txt").exists()
+
+    def test_merge_conflict(self, git_repo):
+        wt = ensure_worktree(git_repo, "alice")
+
+        # Modify same file in both places
+        (git_repo / "README.md").write_text("main version\n")
+        add_all(git_repo)
+        commit(git_repo, "main changes README")
+
+        (wt / "README.md").write_text("alice version\n")
+        add_all(wt)
+        commit(wt, "alice changes README")
+
+        ok, msg = merge_branch(git_repo, "mcpp/alice")
+        assert not ok
+        # Clean up the failed merge
+        subprocess.run(["git", "merge", "--abort"], cwd=str(git_repo), capture_output=True)
