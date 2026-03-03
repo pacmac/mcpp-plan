@@ -516,11 +516,10 @@ class TestWorktreePaths:
         result = resolve_workspace(str(git_repo), "alice", enable_worktrees=False)
         assert result == str(git_repo)
 
-    def test_resolve_workspace_primary_user(self, git_repo):
-        """Primary user (repo owner) should get the repo dir, not a worktree."""
+    def test_resolve_workspace_enabled_gives_worktree(self, git_repo):
+        """All users get a worktree when enabled, including repo owner."""
         result = resolve_workspace(str(git_repo), "testuser", enable_worktrees=True)
-        # tmp_path is owned by current user, so we are the primary user
-        assert result == str(git_repo)
+        assert result == str(worktree_path_for_user(git_repo, "testuser"))
 
 
 class TestWorktreeOperations:

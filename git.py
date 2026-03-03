@@ -413,19 +413,11 @@ def ensure_worktree(repo_dir: str | Path, username: str) -> Path:
 def resolve_workspace(repo_dir: str | Path, username: str, enable_worktrees: bool) -> str:
     """Resolve the working directory for git operations.
 
-    If worktrees are disabled or this is the repo owner (primary user),
-    returns repo_dir. Otherwise ensures a worktree exists and returns its path.
+    If worktrees are disabled, returns repo_dir.
+    Otherwise ensures a worktree exists for this user and returns its path.
+    Main branch stays clean — only updated via plan_sync.
     """
     if not enable_worktrees:
-        return str(repo_dir)
-    # Primary user = owner of the repo directory
-    repo_path = Path(repo_dir)
-    try:
-        repo_owner_uid = repo_path.stat().st_uid
-        current_uid = os.getuid()
-        if current_uid == repo_owner_uid:
-            return str(repo_dir)
-    except OSError:
         return str(repo_dir)
     wt_path = ensure_worktree(repo_dir, username)
     return str(wt_path)
