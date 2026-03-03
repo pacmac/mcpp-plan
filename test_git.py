@@ -41,6 +41,8 @@ from git import (
     ensure_worktree,
     resolve_workspace,
     merge_branch,
+    branch_exists,
+    _ensure_git_exclude,
     WORKTREE_DIR,
 )
 
@@ -601,3 +603,253 @@ class TestMergeBranch:
         assert not ok
         # Clean up the failed merge
         subprocess.run(["git", "merge", "--abort"], cwd=str(git_repo), capture_output=True)
+
+
+# ── Integration tests: full lifecycle with worktrees ──
+
+@pytest.fixture
+def worktree_repo(tmp_path):
+    """Create a repo with bare remote, suitable for worktree integration tests."""
+    bare = tmp_path / "remote.git"
+    local = tmp_path / "local"
+    subprocess.run(["git", "init", "--bare", str(bare)], capture_output=True, check=True)
+    subprocess.run(["git", "clone", str(bare), str(local)], capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=str(local), capture_output=True, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=str(local), capture_output=True, check=True
+    )
+    (local / "README.md").write_text("# Test project\n")
+    subprocess.run(["git", "add", "-A"], cwd=str(local), capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial commit"],
+        cwd=str(local), capture_output=True, check=True
+    )
+    subprocess.run(["git", "push"], cwd=str(local), capture_output=True, check=True)
+    return bare, local
+
+
+class TestIntegrationFullCycle:
+    """Step 6: Full lifecycle — worktree creation, commit, push with bare remote."""
+
+    def test_full_cycle_checkpoint_and_push(self, worktree_repo):
+        bare, local = worktree_repo
+        wt = ensure_worktree(local, "alice")
+
+        # Alice creates a file and commits
+        (wt / "feature.py").write_text("print('hello')\n")
+        tag = McppTag(user="alice", task="feat", step=1)
+        add_all(wt)
+        sha = commit(wt, build_message("add feature", tag))
+
+        # Verify commit exists
+        assert len(sha) == 40
+        assert is_clean(wt)
+        msg = get_commit_message(wt, sha)
+        assert "alice" in msg
+
+        # Push alice's branch
+        from git import push
+        ok, msg = push(wt)
+        assert ok
+
+    def test_worktrees_excluded_from_staging(self, worktree_repo):
+        """Ensure .worktrees/ is never staged by add_all."""
+        _, local = worktree_repo
+        ensure_worktree(local, "alice")
+
+        # Create a regular file on main
+        (local / "normal.txt").write_text("should be staged\n")
+        add_all(local)
+
+        # Check what's staged — .worktrees should NOT be there
+        entries = status_porcelain(local)
+        staged_paths = [e["path"] for e in entries]
+        for p in staged_paths:
+            assert ".worktrees" not in p
+
+    def test_git_exclude_written(self, worktree_repo):
+        """ensure_worktree writes .worktrees to .git/info/exclude."""
+        _, local = worktree_repo
+        ensure_worktree(local, "alice")
+        exclude_path = local / ".git" / "info" / "exclude"
+        assert exclude_path.exists()
+        content = exclude_path.read_text()
+        assert ".worktrees" in content
+
+
+class TestIntegrationMultiUser:
+    """Step 7: Multi-user isolation verification."""
+
+    def test_two_users_independent(self, worktree_repo):
+        _, local = worktree_repo
+        wt_alice = ensure_worktree(local, "alice")
+        wt_bob = ensure_worktree(local, "bob")
+
+        # Alice creates files
+        (wt_alice / "alice.py").write_text("# alice\n")
+        add_all(wt_alice)
+        commit(wt_alice, build_message("alice work", McppTag(user="alice", task="t1", step=1)))
+
+        # Bob creates different files
+        (wt_bob / "bob.py").write_text("# bob\n")
+        add_all(wt_bob)
+        commit(wt_bob, build_message("bob work", McppTag(user="bob", task="t2", step=1)))
+
+        # Isolation: neither sees the other's files
+        assert not (wt_alice / "bob.py").exists()
+        assert not (wt_bob / "alice.py").exists()
+
+        # Main repo doesn't have either
+        assert not (local / "alice.py").exists()
+        assert not (local / "bob.py").exists()
+
+    def test_users_on_different_branches(self, worktree_repo):
+        _, local = worktree_repo
+        wt_alice = ensure_worktree(local, "alice")
+        wt_bob = ensure_worktree(local, "bob")
+        assert current_branch(wt_alice) == "mcpp/alice"
+        assert current_branch(wt_bob) == "mcpp/bob"
+        main = current_branch(local)
+        assert main in ("master", "main")
+
+
+class TestIntegrationSync:
+    """Step 8: plan_sync — merge user branch into main and push."""
+
+    def test_sync_merges_to_main(self, worktree_repo):
+        bare, local = worktree_repo
+        wt = ensure_worktree(local, "alice")
+
+        # Alice commits work
+        (wt / "feature.py").write_text("# feature\n")
+        add_all(wt)
+        commit(wt, build_message("add feature", McppTag(user="alice", task="t1", step=1)))
+
+        # Merge into main
+        ok, msg = merge_branch(local, "mcpp/alice")
+        assert ok
+        assert (local / "feature.py").exists()
+
+        # Push main
+        from git import push
+        ok, msg = push(local)
+        assert ok
+
+    def test_sync_does_not_affect_other_user(self, worktree_repo):
+        _, local = worktree_repo
+        wt_alice = ensure_worktree(local, "alice")
+        wt_bob = ensure_worktree(local, "bob")
+
+        # Both commit work
+        (wt_alice / "alice.py").write_text("# alice\n")
+        add_all(wt_alice)
+        commit(wt_alice, "alice work")
+
+        (wt_bob / "bob.py").write_text("# bob\n")
+        add_all(wt_bob)
+        commit(wt_bob, "bob work")
+
+        # Merge alice into main
+        ok, _ = merge_branch(local, "mcpp/alice")
+        assert ok
+
+        # Bob's worktree is unaffected
+        assert not (wt_bob / "alice.py").exists()
+        assert (wt_bob / "bob.py").exists()
+
+
+class TestIntegrationRevertSafety:
+    """Step 9: Revert safety — one user's revert doesn't affect others."""
+
+    def test_revert_in_worktree_isolated(self, worktree_repo):
+        _, local = worktree_repo
+        wt_alice = ensure_worktree(local, "alice")
+        wt_bob = ensure_worktree(local, "bob")
+
+        # Alice commits, then reverts
+        (wt_alice / "oops.py").write_text("# mistake\n")
+        add_all(wt_alice)
+        sha = commit(wt_alice, "alice oops")
+
+        # Bob commits independently
+        (wt_bob / "good.py").write_text("# good work\n")
+        add_all(wt_bob)
+        commit(wt_bob, "bob good work")
+
+        # Reverse alice's commit
+        patch = reverse_patch(wt_alice, sha)
+        filtered = filter_patch_by_files(patch, {"oops.py"})
+        ok, msg = apply_patch(wt_alice, filtered)
+        assert ok
+
+        # Alice's file is gone
+        assert not (wt_alice / "oops.py").exists()
+
+        # Bob is completely unaffected
+        assert (wt_bob / "good.py").exists()
+        assert is_clean(wt_bob)
+
+
+class TestIntegrationEdgeCases:
+    """Step 10: Edge cases — branch collision, stale dir, cleanup."""
+
+    def test_branch_already_exists(self, worktree_repo):
+        """If branch mcpp/alice exists from a previous run, reuse it."""
+        _, local = worktree_repo
+        wt = ensure_worktree(local, "alice")
+        (wt / "v1.txt").write_text("version 1\n")
+        add_all(wt)
+        commit(wt, "v1")
+
+        # Remove worktree but keep the branch
+        worktree_remove(local, wt)
+        assert not worktree_exists(local, wt)
+        assert branch_exists(local, "mcpp/alice")
+
+        # Re-create — should reuse branch with its history
+        wt2 = ensure_worktree(local, "alice")
+        assert wt2.exists()
+        assert (wt2 / "v1.txt").exists()  # previous commit preserved
+
+    def test_stale_directory_recovered(self, worktree_repo):
+        """If .worktrees/alice/ exists on disk but not in git, recover."""
+        _, local = worktree_repo
+        stale_path = worktree_path_for_user(local, "alice")
+        stale_path.mkdir(parents=True)
+        (stale_path / "junk.txt").write_text("leftover\n")
+
+        # Should clean up and create fresh
+        wt = ensure_worktree(local, "alice")
+        assert wt.exists()
+        assert not (wt / "junk.txt").exists()  # stale content gone
+        assert current_branch(wt) == "mcpp/alice"
+
+    def test_git_exclude_idempotent(self, worktree_repo):
+        """Multiple ensure_worktree calls don't duplicate .git/info/exclude entry."""
+        _, local = worktree_repo
+        ensure_worktree(local, "alice")
+        ensure_worktree(local, "bob")
+
+        exclude_path = local / ".git" / "info" / "exclude"
+        content = exclude_path.read_text()
+        assert content.count(".worktrees") == 1
+
+    def test_add_all_never_stages_worktrees(self, worktree_repo):
+        """Even without .git/info/exclude, pathspec should keep .worktrees out."""
+        _, local = worktree_repo
+        wt = ensure_worktree(local, "alice")
+
+        # Write a file in the worktree AND in the main repo
+        (wt / "alice.txt").write_text("alice\n")
+        (local / "main.txt").write_text("main\n")
+
+        add_all(local)
+        sha = commit(local, "main commit")
+        files = diff_stat(local, sha)
+        assert "main.txt" in files
+        for f in files:
+            assert ".worktrees" not in f

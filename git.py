@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -145,7 +146,10 @@ def status_porcelain(cwd: str | Path) -> list[dict]:
 
 
 def add_all(cwd: str | Path) -> None:
-    """Stage all modified, new, and deleted files."""
+    """Stage all modified, new, and deleted files.
+
+    .worktrees/ is excluded via .git/info/exclude (set by ensure_worktree).
+    """
     _run(["add", "-A"], cwd)
 
 
@@ -372,9 +376,18 @@ def worktree_list(repo_dir: str | Path) -> list[dict]:
     return worktrees
 
 
+def branch_exists(repo_dir: str | Path, branch: str) -> bool:
+    """Check if a local branch exists."""
+    result = _run(["branch", "--list", branch], repo_dir, check=False)
+    return bool(result.stdout.strip())
+
+
 def worktree_add(repo_dir: str | Path, path: str | Path, branch: str) -> None:
-    """Create a new worktree with a new branch based on HEAD."""
-    _run(["worktree", "add", "-b", branch, str(path)], repo_dir)
+    """Create a new worktree. Uses existing branch if it exists, otherwise creates one."""
+    if branch_exists(repo_dir, branch):
+        _run(["worktree", "add", str(path), branch], repo_dir)
+    else:
+        _run(["worktree", "add", "-b", branch, str(path)], repo_dir)
 
 
 def merge_branch(cwd: str | Path, branch: str) -> tuple[bool, str]:
@@ -404,10 +417,40 @@ def ensure_worktree(repo_dir: str | Path, username: str) -> Path:
     if worktree_exists(repo_dir, wt_path):
         return wt_path
     branch = worktree_branch_for_user(username)
+    # Handle stale directory: exists on disk but not registered in git
+    if wt_path.exists():
+        _log.warning("Stale worktree directory at %s — removing before recreation", wt_path)
+        shutil.rmtree(wt_path)
+    # Prune any stale worktree references in git
+    _run(["worktree", "prune"], repo_dir)
     wt_path.parent.mkdir(parents=True, exist_ok=True)
-    worktree_add(repo_dir, wt_path, branch)
+    try:
+        worktree_add(repo_dir, wt_path, branch)
+    except GitError:
+        # Clean up partial state on failure
+        if wt_path.exists():
+            shutil.rmtree(wt_path)
+        raise
+    _ensure_git_exclude(repo_dir)
     _log.info("Created worktree for user %s at %s (branch %s)", username, wt_path, branch)
     return wt_path
+
+
+def _ensure_git_exclude(repo_dir: str | Path) -> None:
+    """Ensure .worktrees is listed in .git/info/exclude."""
+    exclude_path = Path(repo_dir) / ".git" / "info" / "exclude"
+    entry = ".worktrees"
+    try:
+        if exclude_path.exists():
+            content = exclude_path.read_text()
+            if entry in content.splitlines():
+                return
+            exclude_path.write_text(content.rstrip("\n") + "\n" + entry + "\n")
+        else:
+            exclude_path.parent.mkdir(parents=True, exist_ok=True)
+            exclude_path.write_text(entry + "\n")
+    except OSError as e:
+        _log.warning("Could not update .git/info/exclude: %s", e)
 
 
 def resolve_workspace(repo_dir: str | Path, username: str, enable_worktrees: bool) -> str:
