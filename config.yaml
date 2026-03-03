@@ -1,5 +1,5 @@
 workflow:
-  allow_reopen_completed: true
+  allow_reopen_completed: false
   enable_restore: false
   enable_steps: true
   enable_versioning: true

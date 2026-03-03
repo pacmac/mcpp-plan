@@ -1,0 +1,66 @@
+MULTI-USER GIT WORKTREE APPROACH
+
+GOAL
+Allow multiple Linux users to work on the same project repository on the same machine, while keeping work consolidated into a shared codebase.
+
+SETUP (ALREADY HAVE LOCAL + REMOTE)
+- One existing local repository (normal clone, not bare)
+- Remote (origin) already configured
+- Repository directory owned by shared Unix group
+- Proper group write permissions enabled (setgid recommended)
+
+WORKFLOW
+
+1. Shared Repository Location
+   Example:
+     /srv/dev/project
+
+   All users have group access to this directory.
+
+2. Each User Creates Their Own Worktree
+   From inside the main repo:
+
+     git worktree add /home/user1/project-user1 user1-branch
+     git worktree add /home/user2/project-user2 user2-branch
+
+   Or create new branch + worktree:
+
+     git worktree add -b feature-x /home/user1/project-feature-x
+
+3. What Happens
+   - All worktrees share the same .git object database
+   - Each user has:
+       - Their own working directory
+       - Their own branch
+       - Their own index and HEAD
+   - Disk space is minimized (shared objects)
+
+4. Daily Work
+   Users:
+     - Commit normally
+     - Pull from origin
+     - Push to origin
+
+   No special commands required beyond normal Git usage.
+
+5. Consolidation
+   Integration happens using normal Git:
+     - Merge feature branches into main
+     - Or rebase
+     - Or use pull requests (if remote hosted)
+
+   Example:
+     git checkout main
+     git merge user1-branch
+     git merge user2-branch
+     git push
+
+6. Rules
+   - A branch can only be checked out in one worktree at a time
+   - All users must respect branch discipline
+   - Permissions must allow shared write access
+   - Do not run Git as different users without proper group configuration
+
+SUMMARY
+Git worktrees allow multiple users to work in parallel on the same repository
+without recloning, while consolidation remains standard Git merge workflow.
