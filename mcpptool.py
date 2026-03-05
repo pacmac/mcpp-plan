@@ -1426,6 +1426,21 @@ def _resolve_git_dir(git_mod, workspace_dir: str) -> str:
     return git_mod.resolve_workspace(workspace_dir, username, True)
 
 
+def _build_file_entries(git_mod, git_dir: str, user_name: str, notes: str) -> list:
+    """Build FileEntry list from staged changes (call after add_all, before commit)."""
+    entries = []
+    for item in git_mod.status_porcelain(git_dir):
+        filepath = item["path"]
+        entries.append(git_mod.FileEntry(
+            name=filepath,
+            ver="",
+            uid=user_name,
+            flags="",
+            notes=notes,
+        ))
+    return entries
+
+
 def _cmd_checkpoint(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """Save current state as a checkpoint commit."""
     for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
@@ -1454,12 +1469,14 @@ def _cmd_checkpoint(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             else:
                 message = "checkpoint"
 
-        tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
-        full_message = git_mod.build_message(message, tag)
-
         git_mod.add_all(git_dir)
+        file_entries = _build_file_entries(git_mod, git_dir, user_name, message)
+
+        tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
+        full_message = git_mod.build_message(message, tag, file_entries)
+
         sha = git_mod.commit(git_dir, full_message)
-        files = git_mod.diff_stat(git_dir, sha)
+        files = [e.name for e in file_entries]
 
         display = f"Checkpoint **{sha[:8]}**\n"
         if files:
@@ -1497,12 +1514,14 @@ def _cmd_commit(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         if git_mod.is_clean(git_dir):
             return {"success": False, "error": "Nothing to commit — working tree is clean."}
 
-        tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
-        full_message = git_mod.build_message(message, tag)
-
         git_mod.add_all(git_dir)
+        file_entries = _build_file_entries(git_mod, git_dir, user_name, message)
+
+        tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
+        full_message = git_mod.build_message(message, tag, file_entries)
+
         sha = git_mod.commit(git_dir, full_message)
-        files = git_mod.diff_stat(git_dir, sha)
+        files = [e.name for e in file_entries]
 
         display = f"Committed **{sha[:8]}**: {message}\n"
         if files:
@@ -1680,9 +1699,11 @@ def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             plan_db_mod, plan_ctx, conn, user_id, project_id
         )
         revert_tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
-        revert_message = git_mod.build_message(f"revert: {original_subject}", revert_tag)
+        revert_msg_text = f"revert: {original_subject}"
 
         git_mod.add_all(git_dir)
+        file_entries = _build_file_entries(git_mod, git_dir, user_name, revert_msg_text)
+        revert_message = git_mod.build_message(revert_msg_text, revert_tag, file_entries)
         revert_sha = git_mod.commit(git_dir, revert_message)
 
         # Build display

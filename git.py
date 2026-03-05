@@ -51,6 +51,28 @@ class McppTag:
         return f"[mcpp:{','.join(parts)}]"
 
 
+# ── Per-file metadata ──
+# Pipe-delimited lines in commit body, one per changed file:
+#   name|ver|uid|flags|notes
+# ver and flags are empty until mcpp-dev fills them.
+
+FILE_LINE_PATTERN = re.compile(
+    r"^(?P<name>[^|]+)\|(?P<ver>[^|]*)\|(?P<uid>[^|]*)\|(?P<flags>[^|]*)\|(?P<notes>.*)$"
+)
+
+
+@dataclass(frozen=True)
+class FileEntry:
+    name: str
+    ver: str = ""
+    uid: str = ""
+    flags: str = ""
+    notes: str = ""
+
+    def format(self) -> str:
+        return f"{self.name}|{self.ver}|{self.uid}|{self.flags}|{self.notes}"
+
+
 def parse_tag(message: str) -> Optional[McppTag]:
     """Extract an McppTag from a commit message, or None if not present."""
     m = TAG_PATTERN.search(message)
@@ -80,14 +102,43 @@ def parse_tag(message: str) -> Optional[McppTag]:
     )
 
 
-def build_message(message: str, tag: McppTag) -> str:
-    """Build a commit message with the mcpp tag appended."""
-    return f"{message}\n{tag.format()}"
+def parse_file_lines(message: str) -> list[FileEntry]:
+    """Extract per-file metadata lines from a commit message body."""
+    entries = []
+    for line in message.splitlines():
+        m = FILE_LINE_PATTERN.match(line.strip())
+        if m:
+            entries.append(FileEntry(
+                name=m.group("name"),
+                ver=m.group("ver"),
+                uid=m.group("uid"),
+                flags=m.group("flags"),
+                notes=m.group("notes"),
+            ))
+    return entries
+
+
+def build_message(message: str, tag: McppTag, file_entries: Optional[list[FileEntry]] = None) -> str:
+    """Build a commit message with optional per-file lines and the mcpp tag appended."""
+    parts = [message]
+    if file_entries:
+        parts.append("")  # blank line before file lines
+        for entry in file_entries:
+            parts.append(entry.format())
+    parts.append(tag.format())
+    return "\n".join(parts)
 
 
 def strip_tag(message: str) -> str:
-    """Remove the mcpp tag line from a commit message."""
-    return TAG_PATTERN.sub("", message).rstrip("\n")
+    """Remove the mcpp tag line and file metadata lines from a commit message."""
+    lines = []
+    for line in message.splitlines():
+        if TAG_PATTERN.search(line):
+            continue
+        if FILE_LINE_PATTERN.match(line.strip()):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 # ── Git subprocess helpers ──
@@ -167,7 +218,7 @@ def log(
 ) -> list[dict]:
     """Return parsed git log entries.
 
-    Each entry: {sha, author, date, subject, body, tag}
+    Each entry: {sha, author, date, subject, body, tag, file_entries}
     """
     result = _run(
         ["log", f"--max-count={max_count}", f"--format={format_str}"],
@@ -193,6 +244,7 @@ def log(
         body = lines[4] if len(lines) > 4 else ""
         full_message = f"{subject}\n{body}".strip()
         tag = parse_tag(full_message)
+        file_entries = parse_file_lines(full_message)
         entries.append({
             "sha": sha,
             "author": author,
@@ -200,6 +252,7 @@ def log(
             "subject": subject,
             "body": body.strip(),
             "tag": tag,
+            "file_entries": file_entries,
         })
     return entries
 

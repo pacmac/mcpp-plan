@@ -4,6 +4,17 @@ Version number derived from git tag count (`v1.N`).
 
 ---
 
+## v1.31 — 2026-03-05
+
+- Add per-file metadata lines to commit messages using 5-field pipe-delimited format (`name|ver|uid|flags|notes`)
+- New `FileEntry` dataclass and `parse_file_lines()` in `git.py` for building and parsing file metadata
+- `plan_commit`, `plan_checkpoint`, and `plan_restore` now include per-file lines in commit body
+- `plan_log` parses and returns `file_entries` from commit history
+- `strip_tag()` now also removes file metadata lines from display
+- `ver` and `flags` fields are reserved for mcpp-dev (file-level versioning and locking)
+- Add 13 new tests for file entry format, parsing, roundtrip, and strip_tag
+- Update README with commit message format documentation
+
 ## v1.30 — 2026-03-02
 
 - Remove `plan_config_set` from MCP tools — config is operator-only, not agent-modifiable

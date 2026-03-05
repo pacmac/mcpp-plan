@@ -13,7 +13,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from git import (
     McppTag,
+    FileEntry,
     parse_tag,
+    parse_file_lines,
     build_message,
     strip_tag,
     GitError,
@@ -178,6 +180,104 @@ class TestTagParsing:
         tag = parse_tag(msg)
         assert tag.user == "alice"
         assert tag.step is None
+
+
+# ── File entry tests ──
+
+class TestFileEntries:
+    def test_file_entry_format(self):
+        entry = FileEntry(name="auth.py", ver="", uid="CLS", flags="", notes="fixed bug")
+        assert entry.format() == "auth.py||CLS||fixed bug"
+
+    def test_file_entry_format_full(self):
+        entry = FileEntry(name="auth.py", ver="3.15", uid="CLS", flags="L", notes="fixed bug")
+        assert entry.format() == "auth.py|3.15|CLS|L|fixed bug"
+
+    def test_parse_file_lines_empty(self):
+        assert parse_file_lines("just a message") == []
+
+    def test_parse_file_lines_single(self):
+        msg = "fix stuff\n\nauth.py||CLS||fixed bug\n[mcpp:user=CLS,task=t,step=1]"
+        entries = parse_file_lines(msg)
+        assert len(entries) == 1
+        assert entries[0].name == "auth.py"
+        assert entries[0].ver == ""
+        assert entries[0].uid == "CLS"
+        assert entries[0].flags == ""
+        assert entries[0].notes == "fixed bug"
+
+    def test_parse_file_lines_multiple(self):
+        msg = "fix stuff\n\nauth.py||CLS||fixed bug\ndb.py||CLS||added index\n[mcpp:user=CLS]"
+        entries = parse_file_lines(msg)
+        assert len(entries) == 2
+        assert entries[0].name == "auth.py"
+        assert entries[1].name == "db.py"
+        assert entries[1].notes == "added index"
+
+    def test_parse_file_lines_with_version(self):
+        msg = "build\n\napp.js|3.42|PAC|L|locked for release\n[mcpp:user=PAC]"
+        entries = parse_file_lines(msg)
+        assert len(entries) == 1
+        assert entries[0].ver == "3.42"
+        assert entries[0].flags == "L"
+
+    def test_parse_file_lines_ignores_non_pipe_lines(self):
+        msg = "message\n\nsome random text\nauth.py||CLS||note\nanother line\n[mcpp:user=CLS]"
+        entries = parse_file_lines(msg)
+        assert len(entries) == 1
+        assert entries[0].name == "auth.py"
+
+    def test_build_message_with_file_entries(self):
+        tag = McppTag(user="CLS", task="build-auth", step=3)
+        files = [
+            FileEntry(name="auth.py", uid="CLS", notes="fixed bug"),
+            FileEntry(name="db.py", uid="CLS", notes="added index"),
+        ]
+        msg = build_message("auth fixes", tag, files)
+        lines = msg.splitlines()
+        assert lines[0] == "auth fixes"
+        assert lines[1] == ""
+        assert lines[2] == "auth.py||CLS||fixed bug"
+        assert lines[3] == "db.py||CLS||added index"
+        assert lines[4] == "[mcpp:user=CLS,task=build-auth,step=3]"
+
+    def test_build_message_without_file_entries(self):
+        tag = McppTag(user="CLS", task="t", step=1)
+        msg = build_message("checkpoint", tag)
+        assert msg == "checkpoint\n[mcpp:user=CLS,task=t,step=1]"
+
+    def test_build_message_empty_file_list(self):
+        tag = McppTag(user="CLS", task="t", step=1)
+        msg = build_message("checkpoint", tag, [])
+        assert msg == "checkpoint\n[mcpp:user=CLS,task=t,step=1]"
+
+    def test_roundtrip_file_entries(self):
+        tag = McppTag(user="CLS", task="t", step=1)
+        files = [
+            FileEntry(name="a.py", uid="CLS", notes="note a"),
+            FileEntry(name="b.py", ver="2.1", uid="PAC", flags="L", notes="note b"),
+        ]
+        msg = build_message("test", tag, files)
+        parsed_tag = parse_tag(msg)
+        parsed_files = parse_file_lines(msg)
+        assert parsed_tag == tag
+        assert len(parsed_files) == 2
+        assert parsed_files[0].name == "a.py"
+        assert parsed_files[1].ver == "2.1"
+        assert parsed_files[1].flags == "L"
+
+    def test_strip_tag_removes_file_lines(self):
+        msg = "fix stuff\n\nauth.py||CLS||fixed bug\ndb.py||CLS||index\n[mcpp:user=CLS,task=t,step=1]"
+        stripped = strip_tag(msg)
+        assert stripped == "fix stuff"
+
+    def test_strip_tag_preserves_message_only(self):
+        msg = "multi line\nmessage body\n\nauth.py||CLS||note\n[mcpp:user=CLS]"
+        stripped = strip_tag(msg)
+        assert "multi line" in stripped
+        assert "message body" in stripped
+        assert "auth.py" not in stripped
+        assert "[mcpp:" not in stripped
 
 
 # ── Git operation tests ──

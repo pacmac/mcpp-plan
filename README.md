@@ -170,7 +170,19 @@ Reports are written to the workspace directory with date-stamped filenames (e.g.
 | `plan_status` | Show uncommitted changes with user ownership annotations |
 | `plan_diff` | Show what changed since last checkpoint or between two points |
 
-Commits include a structured tag (`[mcpp:user=...,task=...,step=...]`) that associates each commit with its mcpp-plan context. This is transparent to the agent — it just calls `plan_checkpoint` or `plan_commit` and the tagging happens automatically.
+Commits include a structured tag (`[mcpp:user=...,task=...,step=...]`) that associates each commit with its mcpp-plan context, plus per-file metadata lines. This is transparent to the agent — it just calls `plan_checkpoint` or `plan_commit` and the tagging happens automatically.
+
+**Commit message format:**
+
+```
+<human message>
+
+<file>||<uid>||<notes>
+<file>||<uid>||<notes>
+[mcpp:user=...,task=...,step=...]
+```
+
+Each changed file gets a pipe-delimited metadata line with 5 fields: `name|ver|uid|flags|notes`. The `ver` and `flags` fields are reserved for mcpp-dev (file-level versioning and locking) and are left empty by mcpp-plan.
 
 **Multi-user safety:** `plan_restore` generates a reverse commit rather than rewriting history. If another user has modified any of the files since the checkpoint, those files are skipped with a warning — no silent data loss.
 
