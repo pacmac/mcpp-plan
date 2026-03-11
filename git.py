@@ -281,6 +281,48 @@ def show_commit_diff(cwd: str | Path, sha: str) -> str:
     return result.stdout
 
 
+def show_commit(cwd: str | Path, sha: str) -> dict:
+    """Return full commit details: sha, author, date, subject, body, diff."""
+    result = _run(["show", "--format=%H%n%an%n%ai%n%s%n%b%n---BODY-END---", sha], cwd)
+    output = result.stdout
+    # Split message from diff at the body-end marker
+    parts = output.split("---BODY-END---\n", 1)
+    header = parts[0]
+    diff = parts[1] if len(parts) > 1 else ""
+    lines = header.split("\n", 4)
+    return {
+        "sha": lines[0] if len(lines) > 0 else sha,
+        "author": lines[1] if len(lines) > 1 else "",
+        "date": lines[2] if len(lines) > 2 else "",
+        "subject": lines[3] if len(lines) > 3 else "",
+        "body": (lines[4] if len(lines) > 4 else "").strip(),
+        "diff": diff.strip(),
+    }
+
+
+def file_owner(cwd: str | Path, filepath: str) -> Optional[str]:
+    """Return the uid of the user who last modified a file, or None if unknown.
+
+    Checks per-file metadata lines first (v1.31+). Falls back to
+    commit-level mcpp tag user for older commits.
+    """
+    result = _run(
+        ["log", "-1", "--format=%B", "--", filepath],
+        cwd,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    message = result.stdout.strip()
+    # Try per-file metadata first
+    for entry in parse_file_lines(message):
+        if entry.name == filepath and entry.uid:
+            return entry.uid
+    # Fall back to commit-level mcpp tag
+    tag = parse_tag(message)
+    return tag.user if tag else None
+
+
 def log_file_since(cwd: str | Path, sha: str, filepath: str) -> list[dict]:
     """Return commits that touched a file since a given SHA (exclusive)."""
     result = _run(
@@ -358,36 +400,9 @@ def get_commit_message(cwd: str | Path, sha: str) -> str:
     return result.stdout.strip()
 
 
-def reverse_patch(cwd: str | Path, sha: str) -> str:
-    """Generate a reverse patch for a commit."""
-    result = _run(["diff", sha, f"{sha}~1"], cwd)
-    return result.stdout
-
-
-def apply_patch(cwd: str | Path, patch: str) -> tuple[bool, str]:
-    """Apply a patch to the working tree. Returns (success, message)."""
-    result = subprocess.run(
-        ["git", "apply", "--check", "-"],
-        cwd=str(cwd),
-        input=patch,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        return False, result.stderr.strip()
-    # Apply for real
-    result = subprocess.run(
-        ["git", "apply", "-"],
-        cwd=str(cwd),
-        input=patch,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        return False, result.stderr.strip()
-    return True, "Patch applied."
+def checkout_file(cwd: str | Path, sha: str, filepath: str) -> None:
+    """Restore a single file from a specific commit. Auto-stages the result."""
+    _run(["checkout", sha, "--", filepath], cwd)
 
 
 # ── Worktree management ──
@@ -519,20 +534,3 @@ def resolve_workspace(repo_dir: str | Path, username: str, enable_worktrees: boo
     return str(wt_path)
 
 
-def filter_patch_by_files(patch: str, keep_files: set[str]) -> str:
-    """Filter a unified diff to only include hunks for specified files."""
-    lines = patch.split("\n")
-    result_lines = []
-    include = False
-    for line in lines:
-        if line.startswith("diff --git"):
-            # Extract file path: diff --git a/path b/path
-            parts = line.split()
-            if len(parts) >= 4:
-                filepath = parts[3].lstrip("b/")
-                include = filepath in keep_files
-            else:
-                include = False
-        if include:
-            result_lines.append(line)
-    return "\n".join(result_lines)

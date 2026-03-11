@@ -373,16 +373,20 @@ tools:
       type: object
       properties: {}
 
-  - name: plan_restore
-    description: "Undo a previous checkpoint by creating a reverse change. Files modified by other users since will be skipped with a warning."
+  - name: plan_file_restore
+    description: "Restore a single file from a specific commit. One file per call — use plan_log to find the commit, then restore individual files. Blocks if the file belongs to another user."
     inputSchema:
       type: object
       properties:
         sha:
           type: string
-          description: "The checkpoint ID to restore (from plan_log output)"
+          description: "The commit SHA to restore from (from plan_log output)"
+        file:
+          type: string
+          description: "Path of the file to restore (relative to project root)"
       required:
         - sha
+        - file
 
   - name: plan_log
     description: "Show history of saved checkpoints and commits. Defaults to current user and active task."
@@ -422,6 +426,39 @@ tools:
         to:
           type: string
           description: "Ending checkpoint ID (omit for current working state)"
+
+  - name: plan_show
+    description: "Show full details of a specific commit: author, date, message, and diff. Read-only."
+    inputSchema:
+      type: object
+      properties:
+        sha:
+          type: string
+          description: "The commit SHA to inspect"
+      required:
+        - sha
+
+  - name: plan_file_history
+    description: "Show line-by-line authorship of a file (who last modified each line and when). Read-only."
+    inputSchema:
+      type: object
+      properties:
+        file:
+          type: string
+          description: "Path of the file (relative to project root)"
+      required:
+        - file
+
+  - name: plan_file_owner
+    description: "Show who last modified a file. Checks per-file metadata first, falls back to commit-level author. Read-only."
+    inputSchema:
+      type: object
+      properties:
+        file:
+          type: string
+          description: "Path of the file (relative to project root)"
+      required:
+        - file
 
   # ── Utility ──
   - name: plan_readme

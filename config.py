@@ -32,11 +32,12 @@ STEP_TOOLS: frozenset[str] = frozenset({
 
 VERSIONING_TOOLS: frozenset[str] = frozenset({
     "plan_checkpoint", "plan_commit", "plan_push", "plan_sync",
-    "plan_log", "plan_status", "plan_diff",
+    "plan_log", "plan_status", "plan_diff", "plan_show",
+    "plan_file_history", "plan_file_owner",
 })
 
 RESTORE_TOOLS: frozenset[str] = frozenset({
-    "plan_restore",
+    "plan_file_restore",
 })
 
 

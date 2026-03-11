@@ -660,11 +660,14 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_checkpoint": _cmd_checkpoint,
         "plan_commit": _cmd_commit,
         "plan_push": _cmd_push,
-        "plan_restore": _cmd_restore,
+        "plan_file_restore": _cmd_file_restore,
         "plan_sync": _cmd_sync,
         "plan_log": _cmd_log,
         "plan_status": _cmd_status,
         "plan_diff": _cmd_diff,
+        "plan_show": _cmd_show,
+        "plan_file_history": _cmd_file_history,
+        "plan_file_owner": _cmd_file_owner,
     }
 
     handler = tool_map.get(tool_name)
@@ -1624,11 +1627,14 @@ def _cmd_sync(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Restore (reverse-commit) a previous checkpoint."""
+def _cmd_file_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Restore a single file from a specific commit using git checkout."""
     sha = args.get("sha")
+    filepath = args.get("file")
     if not sha:
         return {"success": False, "error": "sha is required"}
+    if not filepath:
+        return {"success": False, "error": "file is required"}
 
     for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
         del sys.modules[stale]
@@ -1649,80 +1655,29 @@ def _cmd_restore(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         if tag.user != user_name:
             return {"success": False, "error": f"Commit {sha[:8]} belongs to user '{tag.user}', not '{user_name}'."}
 
-        # Get files changed in that commit
+        # Verify the file was actually changed in that commit
         files = git_mod.diff_stat(git_dir, sha)
-        if not files:
-            return {"success": False, "error": f"Commit {sha[:8]} has no file changes."}
+        if filepath not in files:
+            return {"success": False, "error": f"File '{filepath}' was not changed in commit {sha[:8]}."}
 
-        # Check which files have been modified by OTHER users since
-        skipped = []
-        safe_files = []
-        for filepath in files:
-            subsequent = git_mod.log_file_since(git_dir, sha, filepath)
-            other_users = set()
-            for entry in subsequent:
-                entry_tag = entry.get("tag")
-                if entry_tag and entry_tag.user and entry_tag.user != user_name:
-                    other_users.add(entry_tag.user)
-            if other_users:
-                skipped.append({"file": filepath, "users": sorted(other_users)})
-            else:
-                safe_files.append(filepath)
-
-        if not safe_files:
-            skip_display = "\n".join(
-                f"  - {s['file']} (modified by {', '.join(s['users'])})" for s in skipped
-            )
+        # Check current file ownership
+        owner = git_mod.file_owner(git_dir, filepath)
+        if owner and owner != user_name:
             return {
                 "success": False,
-                "error": "All files in this commit were modified by other users since.",
-                "display": f"Cannot restore {sha[:8]} — all files modified by others:\n{skip_display}",
+                "error": f"File '{filepath}' belongs to user '{owner}' — cannot restore.",
             }
 
-        # Generate reverse patch, filtered to safe files
-        full_patch = git_mod.reverse_patch(git_dir, sha)
-        if not full_patch.strip():
-            return {"success": False, "error": f"Could not generate reverse patch for {sha[:8]}."}
-
-        filtered_patch = git_mod.filter_patch_by_files(full_patch, set(safe_files))
-        if not filtered_patch.strip():
-            return {"success": False, "error": "Filtered patch is empty after removing conflicting files."}
-
-        # Apply the patch
-        ok, apply_msg = git_mod.apply_patch(git_dir, filtered_patch)
-        if not ok:
-            return {"success": False, "error": f"Patch failed to apply: {apply_msg}"}
-
-        # Commit the revert
-        original_subject = git_mod.strip_tag(commit_msg).split("\n")[0]
-        task_name, step_number, _ = _get_active_context_info(
-            plan_db_mod, plan_ctx, conn, user_id, project_id
-        )
-        revert_tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
-        revert_msg_text = f"revert: {original_subject}"
-
-        git_mod.add_all(git_dir)
-        file_entries = _build_file_entries(git_mod, git_dir, user_name, revert_msg_text)
-        revert_message = git_mod.build_message(revert_msg_text, revert_tag, file_entries)
-        revert_sha = git_mod.commit(git_dir, revert_message)
-
-        # Build display
-        display_lines = [f"Reverted **{sha[:8]}** as **{revert_sha[:8]}**"]
-        display_lines.append(f"Files restored: {', '.join(safe_files)}")
-        if skipped:
-            display_lines.append("Files skipped (modified by other users):")
-            for s in skipped:
-                display_lines.append(f"  - {s['file']} ({', '.join(s['users'])})")
+        # Restore the file from that commit (auto-stages)
+        git_mod.checkout_file(git_dir, sha, filepath)
 
         return {
             "success": True,
             "result": {
-                "original_sha": sha,
-                "revert_sha": revert_sha,
-                "restored_files": safe_files,
-                "skipped_files": skipped,
+                "sha": sha,
+                "file": filepath,
             },
-            "display": "\n".join(display_lines),
+            "display": f"Restored **{filepath}** from commit **{sha[:8]}** (staged)",
         }
     finally:
         conn.close()
@@ -1855,6 +1810,98 @@ def _cmd_status(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         "success": True,
         "result": {"files": annotated},
         "display": "\n".join(lines),
+    }
+
+
+def _cmd_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Show full details of a specific commit."""
+    sha = args.get("sha")
+    if not sha:
+        return {"success": False, "error": "sha is required"}
+
+    git_mod = _load_git_mod()
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
+
+    try:
+        info = git_mod.show_commit(git_dir, sha)
+    except git_mod.GitError as e:
+        return {"success": False, "error": str(e)}
+
+    # Strip mcpp metadata from display
+    clean_subject = git_mod.strip_tag(info["subject"])
+    clean_body = git_mod.strip_tag(info["body"])
+
+    display_lines = [
+        f"**{info['sha'][:8]}** by {info['author']} on {info['date']}",
+        f"**{clean_subject}**",
+    ]
+    if clean_body:
+        display_lines.append(clean_body)
+    if info["diff"]:
+        diff_display = info["diff"]
+        if len(diff_display) > 5000:
+            diff_display = diff_display[:5000] + f"\n... ({len(info['diff'])} chars total, truncated)"
+        display_lines.append(f"```diff\n{diff_display}\n```")
+    else:
+        display_lines.append("No file changes.")
+
+    return {
+        "success": True,
+        "result": info,
+        "display": "\n".join(display_lines),
+    }
+
+
+def _cmd_file_history(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Show line-by-line authorship of a file."""
+    filepath = args.get("file")
+    if not filepath:
+        return {"success": False, "error": "file is required"}
+
+    git_mod = _load_git_mod()
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
+
+    try:
+        result = git_mod._run(["blame", filepath], git_dir)
+    except git_mod.GitError as e:
+        return {"success": False, "error": str(e)}
+
+    output = result.stdout.strip()
+    if not output:
+        return {"success": False, "error": f"No blame output for '{filepath}'."}
+
+    display = output
+    if len(display) > 5000:
+        display = display[:5000] + f"\n... ({len(output)} chars total, truncated)"
+
+    return {
+        "success": True,
+        "result": {"file": filepath, "blame": output},
+        "display": f"```\n{display}\n```",
+    }
+
+
+def _cmd_file_owner(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Show who last modified a file."""
+    filepath = args.get("file")
+    if not filepath:
+        return {"success": False, "error": "file is required"}
+
+    git_mod = _load_git_mod()
+    git_dir = _resolve_git_dir(git_mod, workspace_dir)
+
+    owner = git_mod.file_owner(git_dir, filepath)
+    if owner is None:
+        return {
+            "success": True,
+            "result": {"file": filepath, "owner": None},
+            "display": f"**{filepath}** — owner unknown (no mcpp metadata)",
+        }
+
+    return {
+        "success": True,
+        "result": {"file": filepath, "owner": owner},
+        "display": f"**{filepath}** — owned by **{owner}**",
     }
 
 
