@@ -204,6 +204,19 @@ def add_all(cwd: str | Path) -> None:
     _run(["add", "-A"], cwd)
 
 
+def add_file(cwd: str | Path, filepath: str) -> None:
+    """Stage a single file (including deletions and new files)."""
+    _run(["add", "--", filepath], cwd)
+
+
+def file_commit_count(cwd: str | Path, filepath: str) -> int:
+    """Count how many commits have touched a file. Returns 0 for untracked files."""
+    result = _run(["rev-list", "--count", "HEAD", "--", filepath], cwd, check=False)
+    if result.returncode != 0:
+        return 0
+    return int(result.stdout.strip())
+
+
 def commit(cwd: str | Path, message: str) -> str:
     """Create a commit and return the SHA."""
     _run(["commit", "-m", message], cwd)
