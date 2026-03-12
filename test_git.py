@@ -30,6 +30,8 @@ from git import (
     file_owner,
     show_commit,
     is_clean,
+    add_file,
+    file_commit_count,
     current_branch,
     has_remote,
     get_commit_message,
@@ -1018,3 +1020,68 @@ class TestIntegrationEdgeCases:
         assert "main.txt" in files
         for f in files:
             assert ".worktrees" not in f
+
+
+class TestPerFileCommit:
+    """Tests for add_file and file_commit_count (per-file commit support)."""
+
+    def test_add_file_stages_single(self, git_repo):
+        (git_repo / "a.txt").write_text("aaa\n")
+        (git_repo / "b.txt").write_text("bbb\n")
+        add_file(git_repo, "a.txt")
+        entries = status_porcelain(git_repo)
+        staged = [e for e in entries if e["status"].startswith("A")]
+        unstaged = [e for e in entries if e["status"] == "??"]
+        assert len(staged) == 1
+        assert staged[0]["path"] == "a.txt"
+        assert any(e["path"] == "b.txt" for e in unstaged)
+
+    def test_per_file_commits_distinct_shas(self, git_repo):
+        (git_repo / "a.txt").write_text("aaa\n")
+        (git_repo / "b.txt").write_text("bbb\n")
+        (git_repo / "c.txt").write_text("ccc\n")
+        tag = McppTag(user="alice", task="t1", step=1)
+        shas = []
+        for f in ["a.txt", "b.txt", "c.txt"]:
+            add_file(git_repo, f)
+            entry = FileEntry(name=f, ver="1", uid="alice", flags="", notes="test")
+            msg = build_message("test commit", tag, [entry])
+            shas.append(commit(git_repo, msg))
+        assert len(set(shas)) == 3
+        assert is_clean(git_repo)
+
+    def test_per_file_commit_single_file_entry(self, git_repo):
+        (git_repo / "x.txt").write_text("xxx\n")
+        tag = McppTag(user="bob", task="t2", step=1)
+        add_file(git_repo, "x.txt")
+        entry = FileEntry(name="x.txt", ver="1", uid="bob", flags="", notes="first")
+        msg = build_message("add x", tag, [entry])
+        sha = commit(git_repo, msg)
+        full_msg = get_commit_message(git_repo, sha)
+        file_entries = parse_file_lines(full_msg)
+        assert len(file_entries) == 1
+        assert file_entries[0].name == "x.txt"
+        assert file_entries[0].ver == "1"
+
+    def test_file_commit_count_new_file(self, git_repo):
+        assert file_commit_count(git_repo, "nonexistent.txt") == 0
+
+    def test_file_commit_count_increments(self, git_repo):
+        (git_repo / "f.txt").write_text("v1\n")
+        add_all(git_repo)
+        commit(git_repo, "first")
+        assert file_commit_count(git_repo, "f.txt") == 1
+        (git_repo / "f.txt").write_text("v2\n")
+        add_all(git_repo)
+        commit(git_repo, "second")
+        assert file_commit_count(git_repo, "f.txt") == 2
+
+    def test_add_file_deleted(self, git_repo):
+        (git_repo / "del.txt").write_text("gone\n")
+        add_all(git_repo)
+        commit(git_repo, "add del.txt")
+        (git_repo / "del.txt").unlink()
+        add_file(git_repo, "del.txt")
+        sha = commit(git_repo, "remove del.txt")
+        files = diff_stat(git_repo, sha)
+        assert "del.txt" in files
