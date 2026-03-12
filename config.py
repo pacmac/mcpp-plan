@@ -17,9 +17,6 @@ DEFAULTS: dict[str, Any] = {
         "daily_backup": True,
         "backup_retain_days": 7,
         "enable_steps": True,
-        "enable_versioning": True,
-        "enable_restore": False,
-        "enable_worktrees": False,
     },
 }
 
@@ -30,16 +27,6 @@ STEP_TOOLS: frozenset[str] = frozenset({
     "plan_step_reorder",
 })
 
-VERSIONING_TOOLS: frozenset[str] = frozenset({
-    "plan_checkpoint", "plan_commit", "plan_push", "plan_sync",
-    "plan_log", "plan_status", "plan_diff", "plan_show",
-    "plan_file_history", "plan_file_owner",
-})
-
-RESTORE_TOOLS: frozenset[str] = frozenset({
-    "plan_file_restore",
-})
-
 
 def disabled_tools() -> frozenset[str]:
     """Return tool names that should be disabled based on config toggles."""
@@ -47,10 +34,6 @@ def disabled_tools() -> frozenset[str]:
     result: set[str] = set()
     if not cfg.get("enable_steps", True):
         result |= STEP_TOOLS
-    if not cfg.get("enable_versioning", True):
-        result |= VERSIONING_TOOLS
-    if not cfg.get("enable_restore", True):
-        result |= RESTORE_TOOLS
     return frozenset(result)
 
 
