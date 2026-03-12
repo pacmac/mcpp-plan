@@ -1,2 +1,10 @@
 workflow:
+  allow_reopen_completed: true
+  backup_retain_days: 7
+  daily_backup: true
+  enable_restore: false
   enable_steps: true
+  enable_versioning: true
+  enable_worktrees: false
+  require_goal_and_plan: true
+  vcs_backend: mcpp-plan
