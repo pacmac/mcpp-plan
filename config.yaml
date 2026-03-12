@@ -1,5 +1,5 @@
 workflow:
-  allow_reopen_completed: true
+  allow_reopen_completed: false
   backup_retain_days: 7
   daily_backup: true
   enable_restore: false
