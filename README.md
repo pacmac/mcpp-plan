@@ -64,43 +64,6 @@ Replace `~/projects` with your install folder.
 
 3. The database is created automatically as `plan.db` in the module directory on first use. No setup required.
 
-### Git SSH setup (multi-user)
-
-When using `plan_push` / `plan_commit`, git runs inside the MCP server process — not in the user's interactive shell. For SSH-based remotes to work, each user needs an SSH key that authenticates without an agent or passphrase prompt.
-
-1. Generate a key (no passphrase):
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_myuser -N ""
-```
-
-2. Add it to your Git hosting provider (GitHub, GitLab, etc.) under your account's SSH keys.
-
-3. Create or edit `~/.ssh/config`:
-
-```
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/id_ed25519_myuser
-  IdentitiesOnly yes
-```
-
-4. Accept the host key:
-
-```bash
-ssh -T git@github.com
-```
-
-5. Verify the remote uses SSH (not HTTPS):
-
-```bash
-git remote -v
-# Should show: git@github.com:yourorg/yourrepo.git
-```
-
-**Common pitfall:** If `Host` doesn't match exactly what git uses (e.g. `Host github.com-work` instead of `Host github.com`), SSH won't find the key and push will fail with `Permission denied (publickey)`.
-
 ## Tools
 
 All tools are exposed via MCP with the `plan_` prefix.
@@ -158,33 +121,9 @@ All tools are exposed via MCP with the `plan_` prefix.
 
 Reports are written to the workspace directory with date-stamped filenames (e.g. `project_report_260215.md`, `task_report_build-auth_260215.md`). Same-day files are overwritten.
 
-### Version control tools
+### Version control
 
-| Tool | Description |
-|------|-------------|
-| `plan_checkpoint` | Save current state as a checkpoint (auto-names from active step) |
-| `plan_commit` | Save changes with a meaningful message |
-| `plan_push` | Share saved changes with other users (pulls first, then pushes) |
-| `plan_restore` | Undo a previous checkpoint (reverse commit, skips files modified by others) |
-| `plan_log` | Show history of checkpoints and commits (filterable by user/task/step) |
-| `plan_status` | Show uncommitted changes with user ownership annotations |
-| `plan_diff` | Show what changed since last checkpoint or between two points |
-
-Commits include a structured tag (`[mcpp:user=...,task=...,step=...]`) that associates each commit with its mcpp-plan context, plus per-file metadata lines. This is transparent to the agent — it just calls `plan_checkpoint` or `plan_commit` and the tagging happens automatically.
-
-**Commit message format:**
-
-```
-<human message>
-
-<file>||<uid>||<notes>
-<file>||<uid>||<notes>
-[mcpp:user=...,task=...,step=...]
-```
-
-Each changed file gets a pipe-delimited metadata line with 5 fields: `name|ver|uid|flags|notes`. The `ver` and `flags` fields are reserved for mcpp-dev (file-level versioning and locking) and are left empty by mcpp-plan.
-
-**Multi-user safety:** `plan_restore` generates a reverse commit rather than rewriting history. If another user has modified any of the files since the checkpoint, those files are skipped with a warning — no silent data loss.
+Git operations (checkpoint, commit, push, log, status, diff, file history, file restore) are provided by **[mcpp-git](../mcpp-git)** as `dev_*` tools. Calling the old `plan_*` git tool names returns a redirect message pointing to the correct `dev_*` equivalent.
 
 ### Config tools
 
@@ -336,8 +275,6 @@ workflow:
   daily_backup: true               # create one backup per day on first use
   backup_retain_days: 7            # delete backups older than this many days
   enable_steps: true               # set false to hide step tools and strip step data
-  enable_versioning: true          # set false to hide git versioning tools
-  enable_restore: false            # set true to enable plan_restore (revert checkpoints)
 ```
 
 ### Feature Toggles
@@ -347,11 +284,9 @@ Disable features you don't need:
 ```yaml
 workflow:
   enable_steps: false        # hide step tools, strip step data from results
-  enable_versioning: false   # hide git versioning tools (checkpoint, commit, push, etc.)
-  enable_restore: true       # enable plan_restore (disabled by default)
 ```
 
-All default to `true` except `enable_restore` (defaults to `false`). When disabled:
+When disabled:
 - Tools are hidden from MCP discovery (`tools/list`)
 - Direct calls return a clear error: `"Tool 'X' is disabled (enable_Y: false in config.yaml)"`
 - Step data is stripped from task results and display text
@@ -365,8 +300,6 @@ All default to `true` except `enable_restore` (defaults to `false`). When disabl
 | `workflow` | `daily_backup` | `true` | Create one backup per day on first use |
 | `workflow` | `backup_retain_days` | `7` | Delete backups older than this many days |
 | `workflow` | `enable_steps` | `true` | Set `false` to hide step tools and strip step data |
-| `workflow` | `enable_versioning` | `true` | Set `false` to hide git versioning tools |
-| `workflow` | `enable_restore` | `false` | Set `true` to enable `plan_restore` (revert checkpoints) |
 
 ### Behavior
 
@@ -413,18 +346,6 @@ This lets the agent build its own understanding of the codebase -- what's where,
 
 This keeps your current flow intact while making sure the thought doesn't get lost.
 
-**Checkpoint before big changes.** Before a refactor or risky edit, ask for a commit so you have a rollback point:
-
-```
-> Commit what we have before refactoring.
-```
-
-**Review before you push.** After multi-file edits, ask the agent to summarise what changed:
-
-```
-> Show me what you changed and why.
-```
-
 **Let the agent plan first.** For complex tasks, have it think before writing code:
 
 ```
@@ -443,7 +364,6 @@ This keeps your current flow intact while making sure the thought doesn't get lo
 tool.yaml          MCP tool definitions (schema for all plan_* tools)
 mcpptool.py        MCP entry point -- routes tool calls to Python API
 context.py         Business logic (create/switch/complete tasks and steps)
-git.py             Version control operations (checkpoint, commit, push, restore, log, status, diff)
 config.py          Global configuration (config.yaml loading + defaults)
 db.py              SQLite connection, schema management, user/project helpers
 backup.py          Migration safety pipeline (verified backup, trial-on-copy, row validation)
