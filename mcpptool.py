@@ -1444,6 +1444,21 @@ def _build_file_entries(git_mod, git_dir: str, user_name: str, notes: str) -> li
     return entries
 
 
+def _commit_per_file(git_mod, git_dir: str, message: str, tag, user_name: str) -> list[dict]:
+    """Commit each changed file individually. Returns list of {sha, file, ver}."""
+    changed = git_mod.status_porcelain(git_dir)
+    results = []
+    for item in changed:
+        filepath = item["path"]
+        ver = git_mod.file_commit_count(git_dir, filepath) + 1
+        git_mod.add_file(git_dir, filepath)
+        entry = git_mod.FileEntry(name=filepath, ver=str(ver), uid=user_name, flags="", notes=message)
+        full_message = git_mod.build_message(message, tag, [entry])
+        sha = git_mod.commit(git_dir, full_message)
+        results.append({"sha": sha, "file": filepath, "ver": ver})
+    return results
+
+
 def _cmd_checkpoint(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """Save current state as a checkpoint commit."""
     for stale in [k for k in sys.modules if k == "mcpp_plan" or k.startswith("mcpp_plan.")]:
@@ -1472,22 +1487,17 @@ def _cmd_checkpoint(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             else:
                 message = "checkpoint"
 
-        git_mod.add_all(git_dir)
-        file_entries = _build_file_entries(git_mod, git_dir, user_name, message)
-
         tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
-        full_message = git_mod.build_message(message, tag, file_entries)
+        results = _commit_per_file(git_mod, git_dir, message, tag, user_name)
+        files = [r["file"] for r in results]
 
-        sha = git_mod.commit(git_dir, full_message)
-        files = [e.name for e in file_entries]
-
-        display = f"Checkpoint **{sha[:8]}**\n"
-        if files:
-            display += f"{len(files)} file(s): {', '.join(files)}"
+        display = f"Checkpoint — {len(results)} commit(s)\n"
+        for r in results:
+            display += f"  {r['sha'][:8]} v{r['ver']} {r['file']}\n"
 
         return {
             "success": True,
-            "result": {"sha": sha, "files": files, "message": message},
+            "result": {"commits": results, "files": files, "message": message},
             "display": display,
         }
     finally:
@@ -1517,22 +1527,17 @@ def _cmd_commit(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         if git_mod.is_clean(git_dir):
             return {"success": False, "error": "Nothing to commit — working tree is clean."}
 
-        git_mod.add_all(git_dir)
-        file_entries = _build_file_entries(git_mod, git_dir, user_name, message)
-
         tag = git_mod.McppTag(user=user_name, task=task_name, step=step_number)
-        full_message = git_mod.build_message(message, tag, file_entries)
+        results = _commit_per_file(git_mod, git_dir, message, tag, user_name)
+        files = [r["file"] for r in results]
 
-        sha = git_mod.commit(git_dir, full_message)
-        files = [e.name for e in file_entries]
-
-        display = f"Committed **{sha[:8]}**: {message}\n"
-        if files:
-            display += f"{len(files)} file(s): {', '.join(files)}"
+        display = f"Committed — {len(results)} file(s): {message}\n"
+        for r in results:
+            display += f"  {r['sha'][:8]} v{r['ver']} {r['file']}\n"
 
         return {
             "success": True,
-            "result": {"sha": sha, "files": files, "message": message},
+            "result": {"commits": results, "files": files, "message": message},
             "display": display,
         }
     finally:
