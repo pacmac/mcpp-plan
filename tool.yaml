@@ -344,6 +344,25 @@ tools:
           type: string
           description: "Optional new project name"
 
+  - name: plan_project_purge
+    description: "Permanently delete a project and all its data (tasks, steps, notes, attachments, changelog) from the database. Requires confirm=true. Does not affect the workspace files."
+    inputSchema:
+      type: object
+      required: [confirm]
+      properties:
+        confirm:
+          type: boolean
+          description: "Must be true to proceed. Prevents accidental purges."
+        project_id:
+          type: integer
+          description: "ID of the project to purge. Omit to purge the current workspace project."
+        name:
+          type: string
+          description: "Name of the project to purge (must be unique). Useful for orphaned projects not reachable by CWD."
+        force:
+          type: boolean
+          description: "Purge even if other users have active tasks in the project (default false)."
+
   # ── File attachment tools ──
   - name: plan_file_attach
     description: "Attach a workspace-relative file to a project, task, or step as a single source of truth. Content is read from the file at display time, not stored in the database."

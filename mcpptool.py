@@ -737,6 +737,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_project_set": _cmd_project_set,
         "plan_project_select": _cmd_project_select,
         "plan_project_relink": _cmd_project_relink,
+        "plan_project_purge": _cmd_project_purge,
         # File attachment tools
         "plan_file_attach": _cmd_file_attach,
         "plan_file_detach": _cmd_file_detach,
@@ -1352,6 +1353,60 @@ def _cmd_project_relink(workspace_dir: str, args: dict[str, Any]) -> dict[str, A
     r = _run_plan_cmd(workspace_dir, cmd)
     display = "Relinked project to current workspace.\n\n" + _fmt_project(r.get("result", {}))
     return _with_display(r, display)
+
+
+def _cmd_project_purge(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Permanently delete a project and all its data from the database."""
+    if not args.get("confirm"):
+        return {"success": False, "error": "confirm=true is required to purge a project."}
+
+    force = bool(args.get("force", False))
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    db_path = plan_db_mod.default_db_path()
+    conn = plan_db_mod.connect(db_path)
+    plan_db_mod.ensure_schema(conn)
+    try:
+        # Resolve which project to purge
+        selectors = [args.get("project_id") is not None, args.get("name") is not None]
+        if sum(selectors) > 1:
+            return {"success": False, "error": "Provide at most one of project_id or name (omit both to purge current workspace project)."}
+
+        if args.get("project_id") is not None:
+            project = plan_ctx.get_project(conn, project_id=int(args["project_id"]))
+            if not project:
+                return {"success": False, "error": f"Project id {args['project_id']} not found."}
+            project_id = project["id"]
+        elif args.get("name") is not None:
+            rows = conn.execute(
+                "SELECT id FROM project WHERE project_name = ?", (args["name"],)
+            ).fetchall()
+            if not rows:
+                return {"success": False, "error": f"Project named '{args['name']}' not found."}
+            if len(rows) > 1:
+                ids = ", ".join(str(r["id"] if hasattr(r, '__getitem__') else r[0]) for r in rows)
+                return {"success": False, "error": f"Project name '{args['name']}' is ambiguous (ids: {ids}). Use project_id instead."}
+            project_id = rows[0][0]
+        else:
+            _, project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+
+        try:
+            result = plan_ctx.purge_project(conn, project_id, force=force)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
+        p = result["project"]
+        d = result["deleted"]
+        lines = [
+            f"**Purged**: {p['project_name']} (`{p['absolute_path']}`)",
+            f"  {d.get('contexts', 0)} tasks, {d.get('tasks', 0)} steps, "
+            f"{d.get('context_notes', 0) + d.get('task_notes', 0)} notes, "
+            f"{d.get('attachments', 0)} attachments, "
+            f"{d.get('changelog', 0)} changelog entries removed.",
+        ]
+        return {"success": True, "result": result, "display": "\n".join(lines)}
+    finally:
+        conn.close()
 
 
 # ── File attachment command handlers ──

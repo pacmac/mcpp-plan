@@ -1118,6 +1118,131 @@ def set_active_project_override(conn, user_id: int, project_id: int | None) -> N
     conn.commit()
 
 
+def purge_project(conn, project_id: int, *, force: bool = False) -> dict:
+    """Permanently delete a project and all its data. Returns deletion counts.
+
+    Cascade order:
+      user_prefs (active_project_id cleared)
+      attachments → user_state → changelog → task_notes → tasks
+      → context_state → context_notes → contexts → project
+    """
+    project = get_project(conn, project_id=project_id)
+    if project is None:
+        raise ValueError(f"Project id {project_id} not found.")
+
+    # Multi-user safety check: find other users with active tasks in this project
+    if not force:
+        current_user = db.get_os_user()
+        blockers = conn.execute(
+            "SELECT u.name, COUNT(c.id) AS task_count "
+            "FROM contexts c JOIN users u ON c.user_id = u.id "
+            "WHERE c.project_id = ? AND c.status != 'completed' AND u.name != ? "
+            "GROUP BY u.name",
+            (project_id, current_user),
+        ).fetchall()
+        if blockers:
+            names = ", ".join(f"{r['name']} ({r['task_count']} task{'s' if r['task_count'] != 1 else ''})" for r in blockers)
+            raise ValueError(
+                f"Other users have active tasks in this project: {names}. "
+                "Use force=True to purge anyway."
+            )
+
+    # Collect context IDs for cascaded deletes
+    context_ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM contexts WHERE project_id = ?", (project_id,)
+    ).fetchall()]
+
+    # Collect task (step) IDs
+    task_ids = []
+    if context_ids:
+        placeholders = ",".join("?" * len(context_ids))
+        task_ids = [r["id"] for r in conn.execute(
+            f"SELECT id FROM tasks WHERE context_id IN ({placeholders})", context_ids
+        ).fetchall()]
+
+    conn.execute("BEGIN")
+    try:
+        counts: dict[str, int] = {}
+
+        # user_prefs: clear active_project_id (don't delete the pref row, just null it)
+        cur = conn.execute(
+            "UPDATE user_prefs SET active_project_id = NULL WHERE active_project_id = ?",
+            (project_id,),
+        )
+        counts["user_prefs_cleared"] = cur.rowcount
+
+        # attachments
+        cur = conn.execute("DELETE FROM attachments WHERE project_id = ?", (project_id,))
+        counts["attachments"] = cur.rowcount
+        if context_ids:
+            placeholders = ",".join("?" * len(context_ids))
+            cur = conn.execute(f"DELETE FROM attachments WHERE context_id IN ({placeholders})", context_ids)
+            counts["attachments"] += cur.rowcount
+        if task_ids:
+            placeholders = ",".join("?" * len(task_ids))
+            cur = conn.execute(f"DELETE FROM attachments WHERE task_id IN ({placeholders})", task_ids)
+            counts["attachments"] += cur.rowcount
+
+        # user_state
+        cur = conn.execute("DELETE FROM user_state WHERE project_id = ?", (project_id,))
+        counts["user_state"] = cur.rowcount
+
+        # global_state: null active_context_id if it points to one of this project's contexts
+        if context_ids:
+            placeholders_gs = ",".join("?" * len(context_ids))
+            conn.execute(
+                f"UPDATE global_state SET active_context_id = NULL "
+                f"WHERE active_context_id IN ({placeholders_gs})",
+                context_ids,
+            )
+
+        if context_ids:
+            placeholders = ",".join("?" * len(context_ids))
+
+            # changelog
+            cur = conn.execute(f"DELETE FROM changelog WHERE context_id IN ({placeholders})", context_ids)
+            counts["changelog"] = cur.rowcount
+
+            # task_notes
+            if task_ids:
+                tp = ",".join("?" * len(task_ids))
+                cur = conn.execute(f"DELETE FROM task_notes WHERE task_id IN ({tp})", task_ids)
+                counts["task_notes"] = cur.rowcount
+            else:
+                counts["task_notes"] = 0
+
+            # context_state (references tasks via active_task_id — must precede tasks)
+            cur = conn.execute(f"DELETE FROM context_state WHERE context_id IN ({placeholders})", context_ids)
+            counts["context_state"] = cur.rowcount
+
+            # tasks
+            cur = conn.execute(f"DELETE FROM tasks WHERE context_id IN ({placeholders})", context_ids)
+            counts["tasks"] = cur.rowcount
+
+            # context_notes
+            cur = conn.execute(f"DELETE FROM context_notes WHERE context_id IN ({placeholders})", context_ids)
+            counts["context_notes"] = cur.rowcount
+
+            # contexts
+            cur = conn.execute(f"DELETE FROM contexts WHERE id IN ({placeholders})", context_ids)
+            counts["contexts"] = cur.rowcount
+        else:
+            counts.update({"changelog": 0, "task_notes": 0, "tasks": 0,
+                           "context_state": 0, "context_notes": 0, "contexts": 0})
+
+        # project row
+        conn.execute("DELETE FROM project WHERE id = ?", (project_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return {
+        "project": project,
+        "deleted": counts,
+    }
+
+
 def delete_task(
     conn,
     task_number: int,
