@@ -114,7 +114,7 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_project_set` | Set project name and description (key-gated when `web.key` is set) |
 | `plan_project_select` | Select active project by ID (hidden from agents, requires `web.key`) |
 | `plan_project_relink` | Relink an existing project after moving or renaming its workspace |
-| `plan_project_purge` | Permanently delete a project and all its data from the database |
+| `plan_project_purge` | Permanently delete a project and all its data from the database (exports a markdown backup first) |
 
 ### File attachment tools
 

@@ -1390,6 +1390,23 @@ def _cmd_project_purge(workspace_dir: str, args: dict[str, Any]) -> dict[str, An
         else:
             _, project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
 
+        # Export before deletion — data is still intact at this point
+        from datetime import datetime
+        export_path = None
+        try:
+            export_data = plan_ctx.get_project_report_data(conn, project_id=project_id)
+            export_md = _fmt_project_report(export_data)
+            proj_row = plan_ctx.get_project(conn, project_id=project_id)
+            safe_name = (proj_row or {}).get("project_name", "project").replace(" ", "-")
+            date_str = datetime.now().strftime("%y%m%d")
+            filename = f"project_export_{safe_name}_{date_str}.md"
+            ws_path = Path((proj_row or {}).get("absolute_path", ""))
+            write_dir = ws_path if ws_path.is_dir() else _pkg_path()
+            export_path = write_dir / filename
+            export_path.write_text(export_md, encoding="utf-8")
+        except Exception:
+            export_path = None
+
         try:
             result = plan_ctx.purge_project(conn, project_id, force=force)
         except ValueError as e:
@@ -1404,6 +1421,9 @@ def _cmd_project_purge(workspace_dir: str, args: dict[str, Any]) -> dict[str, An
             f"{d.get('attachments', 0)} attachments, "
             f"{d.get('changelog', 0)} changelog entries removed.",
         ]
+        if export_path:
+            lines.append(f"  Export saved to `{export_path}`")
+            result["export_path"] = str(export_path)
         return {"success": True, "result": result, "display": "\n".join(lines)}
     finally:
         conn.close()
