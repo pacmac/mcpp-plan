@@ -287,6 +287,12 @@ tools:
       type: object
       properties: {}
 
+  - name: plan_project_list
+    description: "List all known projects"
+    inputSchema:
+      type: object
+      properties: {}
+
   - name: plan_project_set
     description: "Set project metadata (name and/or description). Call this when prompted to identify the project."
     inputSchema:
@@ -298,6 +304,24 @@ tools:
         description:
           type: string
           description: "Project description (markdown)"
+        key:
+          type: string
+          description: "Web API key (required when web.key is configured)"
+
+  - name: plan_project_select
+    description: "Select the active project (web server use only). Requires web API key."
+    inputSchema:
+      type: object
+      properties:
+        project_id:
+          type: integer
+          description: "Project ID to select as active"
+        key:
+          type: string
+          description: "Web API key (must match web.key in config.yaml)"
+      required:
+        - project_id
+        - key
 
   # ── Config tools ──
   - name: plan_config_show

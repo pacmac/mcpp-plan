@@ -227,13 +227,25 @@ def _load_pkg(pkg_path: Path):
 def _open_db(plan_db_mod, plan_ctx, workspace_dir: Path):
     """Connect to central DB, ensure schema, resolve project and user.
 
+    Override chain:
+    1. User's project override (set by plan_project_select)
+    2. workspace_dir auto-detect (existing behaviour)
+
     Returns (conn, project_dict, is_new_project, user_id, project_id).
     """
     db_path = plan_db_mod.default_db_path()
     conn = plan_db_mod.connect(db_path)
     plan_db_mod.ensure_schema(conn)
-    project, is_new = plan_ctx.ensure_project(conn, str(workspace_dir))
     user_id = plan_db_mod.get_or_create_user(conn, plan_db_mod.get_os_user())
+
+    # Check for project override
+    override_id = plan_ctx.get_active_project_override(conn, user_id)
+    if override_id is not None:
+        project = plan_ctx.get_project(conn, project_id=override_id)
+        if project:
+            return conn, project, False, user_id, project["id"]
+
+    project, is_new = plan_ctx.ensure_project(conn, str(workspace_dir))
     project_id = project["id"]
     return conn, project, is_new, user_id, project_id
 
@@ -645,7 +657,9 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_user_set": _cmd_user_set,
         # Project tools (workspace metadata)
         "plan_project_show": _cmd_project_show,
+        "plan_project_list": _cmd_project_list,
         "plan_project_set": _cmd_project_set,
+        "plan_project_select": _cmd_project_select,
         # Config tools
         "plan_config_show": _cmd_config_show,
         # plan_config_set removed — config is operator-only (edit config.yaml directly)
@@ -1148,8 +1162,79 @@ def _cmd_project_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
     return _with_display(r, _fmt_project(r.get("result", {})))
 
 
+def _cmd_project_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """List all known projects."""
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    db_path = plan_db_mod.default_db_path()
+    conn = plan_db_mod.connect(db_path)
+    plan_db_mod.ensure_schema(conn)
+    try:
+        projects = plan_ctx.list_projects(conn)
+        lines = ["**Projects**"]
+        for p in projects:
+            desc = f" — {p['description_md']}" if p.get("description_md") else ""
+            lines.append(f"- [{p['id']}] **{p['project_name']}** `{p['absolute_path']}`{desc}")
+        if not projects:
+            lines.append("No projects found.")
+        return {"success": True, "result": {"projects": projects}, "display": "\n".join(lines)}
+    finally:
+        conn.close()
+
+
+def _cmd_project_select(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Select active project (web server only, key-gated). Pass project_id=0 to clear."""
+    key = args.get("key")
+    cfg_mod = _load_config_mod()
+    if not cfg_mod.check_web_key(key):
+        return {"success": False, "error": "Invalid or missing web API key."}
+
+    project_id = args.get("project_id")
+    if project_id is None:
+        return {"success": False, "error": "project_id is required"}
+
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    db_path = plan_db_mod.default_db_path()
+    conn = plan_db_mod.connect(db_path)
+    plan_db_mod.ensure_schema(conn)
+    try:
+        user_id = plan_db_mod.get_or_create_user(conn, plan_db_mod.get_os_user())
+
+        # project_id=0 clears the override
+        if project_id == 0:
+            plan_ctx.set_active_project_override(conn, user_id, None)
+            return {
+                "success": True,
+                "result": {},
+                "display": "Project override cleared. Falling back to workspace auto-detect.",
+            }
+
+        # Verify the project exists
+        project = plan_ctx.get_project(conn, project_id=project_id)
+        if not project:
+            return {"success": False, "error": f"Project {project_id} not found."}
+
+        plan_ctx.set_active_project_override(conn, user_id, project_id)
+        return {
+            "success": True,
+            "result": project,
+            "display": f"Active project set to **{project['project_name']}** (id:{project_id})",
+        }
+    finally:
+        conn.close()
+
+
 def _cmd_project_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """plan project set [--name <name>] [--description <desc>]"""
+    # If web.key is configured, require it for project_set
+    cfg_mod = _load_config_mod()
+    configured_key = cfg_mod.get_config().get("web", {}).get("key", "")
+    if configured_key:
+        provided_key = args.get("key")
+        if not cfg_mod.check_web_key(provided_key):
+            return {"success": False, "error": "Invalid or missing web API key. project_set requires 'key' when web.key is configured."}
+
     cmd = ["project", "set"]
     if name := args.get("name"):
         cmd.extend(["--name", name])

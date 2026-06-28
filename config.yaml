@@ -8,3 +8,5 @@ workflow:
   enable_worktrees: false
   require_goal_and_plan: true
   vcs_backend: mcpp-plan
+web:
+  key: "kampong" 

@@ -110,7 +110,9 @@ All tools are exposed via MCP with the `plan_` prefix.
 | Tool | Description |
 |------|-------------|
 | `plan_project_show` | Show project metadata |
-| `plan_project_set` | Set project name and description |
+| `plan_project_list` | List all known projects |
+| `plan_project_set` | Set project name and description (key-gated when `web.key` is set) |
+| `plan_project_select` | Select active project by ID (hidden from agents, requires `web.key`) |
 
 ### Report tools
 
@@ -124,6 +126,32 @@ Reports are written to the workspace directory with date-stamped filenames (e.g.
 ### Version control
 
 Git operations (checkpoint, commit, push, log, status, diff, file history, file restore) are provided by **[mcpp-git](../mcpp-git)** as `dev_*` tools. Calling the old `plan_*` git tool names returns a redirect message pointing to the correct `dev_*` equivalent.
+
+### Web API (project selection)
+
+When mcpp-plan is accessed from a web server (no `workspace_dir` context), the server needs to explicitly select which project to operate on.
+
+**Setup:** Add a secret key to `config.yaml`:
+
+```yaml
+web:
+  key: "your-secret-key-here"
+```
+
+**How it works:**
+
+1. The web server calls `plan_project_list` to show available projects
+2. The user picks a project
+3. The web server calls `plan_project_select` with the project ID and key
+4. All subsequent tool calls use that project instead of auto-detecting from workspace
+5. Pass `project_id: 0` to clear the override and revert to auto-detect
+
+**Security:**
+
+- `plan_project_select` is hidden from MCP discovery — agents never see it
+- Both `plan_project_select` and `plan_project_set` require the `key` parameter when `web.key` is configured
+- `plan_project_list` is open — agents can list projects but cannot select or modify them
+- When `web.key` is empty (default), the key gate is inactive and `plan_project_set` works without a key
 
 ### Config tools
 
@@ -259,6 +287,7 @@ Core tables:
 - **`tasks`** -- steps within a task (title, status, ordering)
 - **`context_state`** -- active step cursor per task
 - **`user_state`** -- active task cursor per user per project
+- **`user_prefs`** -- per-user preferences (active project override for web access)
 - **`context_notes`** / **`task_notes`** -- typed notes (`goal`, `plan`, `note`)
 - **`changelog`** -- audit log of all state changes
 
@@ -275,6 +304,9 @@ workflow:
   daily_backup: true               # create one backup per day on first use
   backup_retain_days: 7            # delete backups older than this many days
   enable_steps: true               # set false to hide step tools and strip step data
+
+web:
+  key: ""                          # web API key (empty = disabled, set to enable project selection)
 ```
 
 ### Feature Toggles
@@ -300,6 +332,7 @@ When disabled:
 | `workflow` | `daily_backup` | `true` | Create one backup per day on first use |
 | `workflow` | `backup_retain_days` | `7` | Delete backups older than this many days |
 | `workflow` | `enable_steps` | `true` | Set `false` to hide step tools and strip step data |
+| `web` | `key` | `""` | Web API key for project selection (empty = disabled) |
 
 ### Behavior
 

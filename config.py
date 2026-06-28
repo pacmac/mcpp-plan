@@ -18,6 +18,9 @@ DEFAULTS: dict[str, Any] = {
         "backup_retain_days": 7,
         "enable_steps": True,
     },
+    "web": {
+        "key": "",
+    },
 }
 
 STEP_TOOLS: frozenset[str] = frozenset({
@@ -35,6 +38,19 @@ def disabled_tools() -> frozenset[str]:
     if not cfg.get("enable_steps", True):
         result |= STEP_TOOLS
     return frozenset(result)
+
+
+WEB_ONLY_TOOLS: frozenset[str] = frozenset({
+    "plan_project_select",
+})
+
+
+def check_web_key(provided: str | None) -> bool:
+    """Return True if provided key matches the configured web.key (non-empty)."""
+    configured = get_config().get("web", {}).get("key", "")
+    if not configured:
+        return False
+    return provided == configured
 
 
 def _deep_merge(defaults: dict, overrides: dict) -> dict:

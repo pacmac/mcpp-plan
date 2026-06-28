@@ -1,4 +1,4 @@
-"""Integration tests for feature toggles (enable_steps, enable_versioning).
+"""Integration tests for feature toggles (enable_steps) and web-only tools.
 
 Uses real config.yaml writes — mocks get stomped by _load_pkg().
 
@@ -53,6 +53,10 @@ def _write_config(**workflow_overrides):
     CONFIG_PATH.write_text(yaml.safe_dump(cfg, default_flow_style=False))
 
 
+def _write_full_config(data: dict):
+    CONFIG_PATH.write_text(yaml.safe_dump(data, default_flow_style=False))
+
+
 def _load_config():
     """Load config.py via importlib (no package dependency)."""
     spec = importlib.util.spec_from_file_location("_cfg", str(MODULE_DIR / "config.py"))
@@ -90,8 +94,8 @@ def test_defaults():
     cfg = _load_config()
     wf = cfg.DEFAULTS["workflow"]
     report("enable_steps defaults to True", wf["enable_steps"] is True)
-    report("enable_versioning defaults to True", wf["enable_versioning"] is True)
-    report("enable_restore defaults to False", wf["enable_restore"] is False)
+    web = cfg.DEFAULTS["web"]
+    report("web.key defaults to empty string", web["key"] == "")
 
 
 def test_disabled_tools_steps_off():
@@ -99,41 +103,13 @@ def test_disabled_tools_steps_off():
     cfg = _load_config()
     result = cfg.disabled_tools()
     report("steps off: all step tools disabled", cfg.STEP_TOOLS.issubset(result))
-    report("steps off: no versioning tools", len(cfg.VERSIONING_TOOLS & result) == 0)
-    report("steps off: restore tools still disabled (default)", cfg.RESTORE_TOOLS.issubset(result))
-
-
-def test_disabled_tools_versioning_off():
-    _write_config(enable_versioning=False)
-    cfg = _load_config()
-    result = cfg.disabled_tools()
-    report("versioning off: all versioning tools disabled", cfg.VERSIONING_TOOLS.issubset(result))
-    report("versioning off: no step tools", len(cfg.STEP_TOOLS & result) == 0)
-    report("versioning off: restore tools still disabled (default)", cfg.RESTORE_TOOLS.issubset(result))
-
-
-def test_disabled_tools_both_off():
-    _write_config(enable_steps=False, enable_versioning=False)
-    cfg = _load_config()
-    result = cfg.disabled_tools()
-    expected = cfg.STEP_TOOLS | cfg.VERSIONING_TOOLS
-    report("both off: all toggled tools disabled", expected.issubset(result))
-
-
-def test_disabled_tools_restore_off():
-    _write_config(enable_restore=False)
-    cfg = _load_config()
-    result = cfg.disabled_tools()
-    report("restore off: all restore tools disabled", cfg.RESTORE_TOOLS.issubset(result))
-    report("restore off: no step tools", len(cfg.STEP_TOOLS & result) == 0)
-    report("restore off: no versioning tools", len(cfg.VERSIONING_TOOLS & result) == 0)
 
 
 def test_disabled_tools_defaults():
     _write_config()
     cfg = _load_config()
     result = cfg.disabled_tools()
-    report("defaults: only restore tools disabled", result == cfg.RESTORE_TOOLS)
+    report("defaults: no tools disabled", result == frozenset())
 
 
 def test_tool_sets():
@@ -141,8 +117,22 @@ def test_tool_sets():
     bad = [t for t in cfg.STEP_TOOLS if not t.startswith("plan_step_")]
     report("STEP_TOOLS all start with plan_step_", len(bad) == 0, f"bad: {bad}")
     report("STEP_TOOLS has 10 tools", len(cfg.STEP_TOOLS) == 10, f"got {len(cfg.STEP_TOOLS)}")
-    report("VERSIONING_TOOLS has 6 tools", len(cfg.VERSIONING_TOOLS) == 6, f"got {len(cfg.VERSIONING_TOOLS)}")
-    report("RESTORE_TOOLS has 1 tool", len(cfg.RESTORE_TOOLS) == 1, f"got {len(cfg.RESTORE_TOOLS)}")
+    report("WEB_ONLY_TOOLS has 1 tool", len(cfg.WEB_ONLY_TOOLS) == 1, f"got {len(cfg.WEB_ONLY_TOOLS)}")
+
+
+def test_web_key():
+    _write_full_config({"web": {"key": "test-secret-123"}})
+    cfg = _load_config()
+    report("check_web_key: correct key accepted", cfg.check_web_key("test-secret-123") is True)
+    report("check_web_key: wrong key rejected", cfg.check_web_key("wrong") is False)
+    report("check_web_key: None rejected", cfg.check_web_key(None) is False)
+    report("check_web_key: empty rejected", cfg.check_web_key("") is False)
+
+
+def test_web_key_unconfigured():
+    _write_config()  # no web.key set
+    cfg = _load_config()
+    report("check_web_key: rejected when unconfigured", cfg.check_web_key("anything") is False)
 
 
 # ══════════════════════════════════════════════════════════
@@ -155,7 +145,9 @@ def test_toolfilter_defaults():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     cfg = _load_config()
-    report("toolfilter: only restore excluded by default", mod.excluded_tools() == cfg.RESTORE_TOOLS)
+    excluded = mod.excluded_tools()
+    report("toolfilter: web-only tools excluded by default", cfg.WEB_ONLY_TOOLS.issubset(excluded))
+    report("toolfilter: plan_project_select excluded", "plan_project_select" in excluded)
 
 
 def test_toolfilter_steps_off():
@@ -166,16 +158,7 @@ def test_toolfilter_steps_off():
     cfg = _load_config()
     excluded = mod.excluded_tools()
     report("toolfilter: excludes step tools", cfg.STEP_TOOLS.issubset(excluded))
-
-
-def test_toolfilter_both_off():
-    _write_config(enable_steps=False, enable_versioning=False)
-    spec = importlib.util.spec_from_file_location("_tf3", str(MODULE_DIR / "toolfilter.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    cfg = _load_config()
-    excluded = mod.excluded_tools()
-    report("toolfilter: excludes all toggled tools", (cfg.STEP_TOOLS | cfg.VERSIONING_TOOLS).issubset(excluded))
+    report("toolfilter: still excludes web-only tools", cfg.WEB_ONLY_TOOLS.issubset(excluded))
 
 
 # ══════════════════════════════════════════════════════════
@@ -191,32 +174,67 @@ def test_rx_step_tools_blocked():
         report(f"RX blocks {tool}", ok, r.get("error", "")[:60])
 
 
-def test_rx_versioning_tools_blocked():
-    _write_config(enable_versioning=False)
-    cfg = _load_config()
-    for tool in sorted(cfg.VERSIONING_TOOLS):
-        r = _call(tool, {"message": "x", "sha": "x"})
-        ok = not r.get("success") and "disabled" in r.get("error", "")
-        report(f"RX blocks {tool}", ok, r.get("error", "")[:60])
-
-
-def test_rx_restore_tools_blocked():
-    _write_config(enable_restore=False)
-    cfg = _load_config()
-    for tool in sorted(cfg.RESTORE_TOOLS):
-        r = _call(tool, {"sha": "x"})
-        ok = not r.get("success") and "disabled" in r.get("error", "")
-        report(f"RX blocks {tool}", ok, r.get("error", "")[:60])
-        ok2 = "enable_restore" in r.get("error", "")
-        report(f"RX error mentions enable_restore", ok2, r.get("error", "")[:60])
-
-
 def test_rx_task_tools_not_blocked():
-    _write_config(enable_steps=False, enable_versioning=False)
+    _write_config(enable_steps=False)
     r = _call("plan_task_list")
     report("task_list not blocked", r.get("success") is True, r.get("error", ""))
     r = _call("plan_task_status")
     report("task_status not blocked", r.get("success") is True, r.get("error", ""))
+
+
+# ══════════════════════════════════════════════════════════
+# INTEGRATION — project tools
+# ══════════════════════════════════════════════════════════
+
+def test_project_list():
+    _write_config()
+    r = _call("plan_project_list")
+    report("project_list succeeds", r.get("success") is True, r.get("error", ""))
+    projects = r.get("result", {}).get("projects", [])
+    report("project_list returns projects", len(projects) > 0, f"got {len(projects)}")
+
+
+def test_project_select_no_key():
+    _write_full_config({"web": {"key": "secret123"}})
+    r = _call("plan_project_select", {"project_id": 1})
+    report("project_select: rejected without key", not r.get("success"))
+    report("project_select: error mentions key", "key" in r.get("error", "").lower())
+
+
+def test_project_select_wrong_key():
+    _write_full_config({"web": {"key": "secret123"}})
+    r = _call("plan_project_select", {"project_id": 1, "key": "wrong"})
+    report("project_select: rejected with wrong key", not r.get("success"))
+
+
+def test_project_select_valid():
+    _write_full_config({"web": {"key": "secret123"}})
+    # First get a valid project ID
+    r = _call("plan_project_list")
+    projects = r.get("result", {}).get("projects", [])
+    if not projects:
+        report("project_select: skipped (no projects)", True)
+        return
+    pid = projects[0]["id"]
+    r = _call("plan_project_select", {"project_id": pid, "key": "secret123"})
+    report("project_select: accepted with correct key", r.get("success") is True, r.get("error", ""))
+
+    # Clear the override so it doesn't affect other tests
+    r = _call("plan_project_select", {"project_id": 0, "key": "secret123"})
+    report("project_select: clear override (project_id=0)", r.get("success") is True, r.get("error", ""))
+
+
+def test_project_set_key_gate():
+    _write_full_config({"web": {"key": "secret123"}})
+    r = _call("plan_project_set", {"name": "should-fail"})
+    report("project_set: rejected without key when web.key set", not r.get("success"))
+    report("project_set: error mentions key", "key" in r.get("error", "").lower())
+
+
+def test_project_set_no_gate_when_unconfigured():
+    _write_config()  # no web.key
+    r = _call("plan_project_set", {"name": "mcpp-plan"})
+    report("project_set: allowed when web.key not configured", r.get("success") is True, r.get("error", ""))
 
 
 # ══════════════════════════════════════════════════════════
@@ -318,23 +336,29 @@ if __name__ == "__main__":
         test_defaults()
         test_tool_sets()
 
+        print("\n-- Unit: Web key --")
+        test_web_key()
+        test_web_key_unconfigured()
+
         print("\n-- Unit: disabled_tools --")
         test_disabled_tools_steps_off()
-        test_disabled_tools_versioning_off()
-        test_disabled_tools_restore_off()
-        test_disabled_tools_both_off()
         test_disabled_tools_defaults()
 
         print("\n-- Unit: toolfilter.py --")
         test_toolfilter_defaults()
         test_toolfilter_steps_off()
-        test_toolfilter_both_off()
 
         print("\n-- Integration: RX filter --")
         test_rx_step_tools_blocked()
-        test_rx_versioning_tools_blocked()
-        test_rx_restore_tools_blocked()
         test_rx_task_tools_not_blocked()
+
+        print("\n-- Integration: Project tools --")
+        test_project_list()
+        test_project_select_no_key()
+        test_project_select_wrong_key()
+        test_project_select_valid()
+        test_project_set_key_gate()
+        test_project_set_no_gate_when_unconfigured()
 
         print("\n-- Integration: Setup test task --")
         _setup_test_task()

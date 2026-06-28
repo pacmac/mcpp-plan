@@ -1,7 +1,7 @@
 """Tool filter for mcpp-plan feature toggles.
 
 Returns tool names to exclude from MCP discovery
-based on enable_steps/enable_versioning in config.yaml.
+based on config toggles and web-only restrictions.
 """
 
 from __future__ import annotations
@@ -18,4 +18,4 @@ def excluded_tools() -> frozenset[str]:
         return frozenset()
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod.disabled_tools()
+    return mod.disabled_tools() | mod.WEB_ONLY_TOOLS

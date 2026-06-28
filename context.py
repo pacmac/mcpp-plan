@@ -987,6 +987,36 @@ def ensure_project(conn, cwd: str) -> tuple[dict, bool]:
     return project, True
 
 
+def list_projects(conn) -> list[dict]:
+    """Return all known projects."""
+    rows = conn.execute(
+        "SELECT id, project_name, absolute_path, description_md, created_at FROM project ORDER BY project_name"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_active_project_override(conn, user_id: int) -> int | None:
+    """Return the user's project override ID, or None if not set."""
+    row = conn.execute(
+        "SELECT active_project_id FROM user_prefs WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if row and row["active_project_id"]:
+        return row["active_project_id"]
+    return None
+
+
+def set_active_project_override(conn, user_id: int, project_id: int | None) -> None:
+    """Set or clear the user's project override."""
+    now = db.utc_now_iso()
+    conn.execute(
+        "INSERT OR REPLACE INTO user_prefs (user_id, active_project_id, updated_at) "
+        "VALUES (?, ?, ?)",
+        (user_id, project_id, now),
+    )
+    conn.commit()
+
+
 def delete_task(
     conn,
     task_number: int,
