@@ -973,6 +973,107 @@ def set_project(conn, project_id: int | None = None, project_name: str | None = 
         return get_project(conn, project_id=existing["id"])
 
 
+def _project_usage_counts(conn, project_id: int) -> dict[str, int]:
+    """Return counts of rows that make a project unsafe to discard."""
+    context_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM contexts WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()["n"]
+    state_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM user_state WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()["n"]
+    return {"contexts": int(context_count), "user_state": int(state_count)}
+
+
+def _resolve_project_for_relink(
+    conn,
+    *,
+    project_id: int | None = None,
+    old_path: str | None = None,
+    name: str | None = None,
+) -> dict:
+    selectors = [project_id is not None, old_path is not None, name is not None]
+    if sum(selectors) != 1:
+        raise ValueError("Provide exactly one of project_id, old_path, or name.")
+
+    if project_id is not None:
+        project = get_project(conn, project_id=project_id)
+        if project is None:
+            raise ValueError(f"Project id {project_id} not found.")
+        return project
+
+    if old_path is not None:
+        project = get_project(conn, absolute_path=old_path)
+        if project is None:
+            raise ValueError(f"Project at path '{old_path}' not found.")
+        return project
+
+    rows = conn.execute(
+        "SELECT id, project_name, absolute_path, description_md, created_at "
+        "FROM project WHERE project_name = ? ORDER BY id",
+        (name,),
+    ).fetchall()
+    if not rows:
+        raise ValueError(f"Project named '{name}' not found.")
+    if len(rows) > 1:
+        ids = ", ".join(str(row["id"]) for row in rows)
+        raise ValueError(
+            f"Project name '{name}' is ambiguous; matching ids: {ids}. "
+            "Relink by project_id or old_path instead."
+        )
+    return dict(rows[0])
+
+
+def relink_project(
+    conn,
+    *,
+    new_path: str,
+    project_id: int | None = None,
+    old_path: str | None = None,
+    name: str | None = None,
+    new_name: str | None = None,
+) -> dict:
+    """Move an existing project record to a new filesystem path.
+
+    This is for workspaces that were moved or renamed after mcpp-plan state
+    already existed. If a new empty placeholder project was already created at
+    new_path, it is removed. Non-empty target projects are left untouched and
+    reported as conflicts.
+    """
+    if not new_path:
+        raise ValueError("new_path is required.")
+
+    source = _resolve_project_for_relink(
+        conn,
+        project_id=project_id,
+        old_path=old_path,
+        name=name,
+    )
+    target = get_project(conn, absolute_path=new_path)
+    if target and target["id"] != source["id"]:
+        usage = _project_usage_counts(conn, target["id"])
+        if usage["contexts"] or usage["user_state"]:
+            raise ValueError(
+                f"Cannot relink to '{new_path}': project id {target['id']} "
+                f"already uses that path ({usage['contexts']} tasks, "
+                f"{usage['user_state']} user state rows)."
+            )
+        conn.execute("DELETE FROM project WHERE id = ?", (target["id"],))
+
+    updates = ["absolute_path = ?"]
+    params: list[object] = [new_path]
+    if new_name is not None:
+        updates.append("project_name = ?")
+        params.append(new_name)
+    params.append(source["id"])
+    conn.execute(
+        f"UPDATE project SET {', '.join(updates)} WHERE id = ?",
+        params,
+    )
+    return get_project(conn, project_id=source["id"])
+
+
 def ensure_project(conn, cwd: str) -> tuple[dict, bool]:
     """Ensure project row exists for this CWD, auto-populating if needed.
 

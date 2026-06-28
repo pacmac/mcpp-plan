@@ -113,6 +113,7 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_project_list` | List all known projects |
 | `plan_project_set` | Set project name and description (key-gated when `web.key` is set) |
 | `plan_project_select` | Select active project by ID (hidden from agents, requires `web.key`) |
+| `plan_project_relink` | Relink an existing project after moving or renaming its workspace |
 
 ### Report tools
 
@@ -275,7 +276,7 @@ The adopted task becomes active automatically. A `new_name` is required if a tas
 
 ## Database
 
-All state lives in a single SQLite database at `plan.db` in the module directory, shared across all projects. Each project is identified by its absolute filesystem path.
+All state lives in a single SQLite database at `plan.db` in the module directory, shared across all projects. Each project is identified by its absolute filesystem path. If you move or rename a workspace, call `plan_project_relink` with exactly one selector (`project_id`, `old_path`, or unique `name`) to update the saved path to the current workspace. If an empty placeholder project was already created at the new path, relinking removes it; if the target path already has tasks or user state, relinking stops with a conflict.
 
 ### Schema
 

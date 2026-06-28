@@ -323,6 +323,27 @@ tools:
         - project_id
         - key
 
+  - name: plan_project_relink
+    description: "Relink an existing project record after moving or renaming a workspace. Defaults the new path to the current workspace."
+    inputSchema:
+      type: object
+      properties:
+        project_id:
+          type: integer
+          description: "Existing project ID to relink"
+        old_path:
+          type: string
+          description: "Previous absolute path of the existing project"
+        name:
+          type: string
+          description: "Existing project name to relink; must be unique"
+        new_path:
+          type: string
+          description: "New absolute path (defaults to current workspace)"
+        new_name:
+          type: string
+          description: "Optional new project name"
+
   # ── Config tools ──
   - name: plan_config_show
     description: "Show current configuration (merged defaults + config.yaml overrides)"

@@ -556,6 +556,47 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                     conn.close()
 
             elif command == "project":
+                if action == "relink":
+                    db_path = plan_db_mod.default_db_path()
+                    conn = plan_db_mod.connect(db_path)
+                    plan_db_mod.ensure_schema(conn)
+                    try:
+                        project_id = None
+                        old_path = None
+                        name = None
+                        new_path = str(workspace_dir)
+                        new_name = None
+                        i = 2
+                        while i < len(cmd_args):
+                            if cmd_args[i] == "--project-id" and i + 1 < len(cmd_args):
+                                project_id = int(cmd_args[i + 1])
+                                i += 2
+                            elif cmd_args[i] == "--old-path" and i + 1 < len(cmd_args):
+                                old_path = cmd_args[i + 1]
+                                i += 2
+                            elif cmd_args[i] == "--name" and i + 1 < len(cmd_args):
+                                name = cmd_args[i + 1]
+                                i += 2
+                            elif cmd_args[i] == "--new-path" and i + 1 < len(cmd_args):
+                                new_path = cmd_args[i + 1]
+                                i += 2
+                            elif cmd_args[i] == "--new-name" and i + 1 < len(cmd_args):
+                                new_name = cmd_args[i + 1]
+                                i += 2
+                            else:
+                                i += 1
+                        result = plan_ctx.relink_project(
+                            conn,
+                            project_id=project_id,
+                            old_path=old_path,
+                            name=name,
+                            new_path=new_path,
+                            new_name=new_name,
+                        )
+                        return {"success": True, "result": result}
+                    finally:
+                        conn.close()
+
                 conn, project, is_new, _user_id, _project_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
                 try:
                     if action == "show":
@@ -660,6 +701,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_project_list": _cmd_project_list,
         "plan_project_set": _cmd_project_set,
         "plan_project_select": _cmd_project_select,
+        "plan_project_relink": _cmd_project_relink,
         # Config tools
         "plan_config_show": _cmd_config_show,
         # plan_config_set removed — config is operator-only (edit config.yaml directly)
@@ -1242,6 +1284,29 @@ def _cmd_project_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
         cmd.extend(["--description", description])
     r = _run_plan_cmd(workspace_dir, cmd)
     return _with_display(r, _fmt_project(r.get("result", {})))
+
+
+def _cmd_project_relink(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Relink an existing project record to this workspace path."""
+    selectors = [args.get("project_id") is not None, args.get("old_path") is not None, args.get("name") is not None]
+    if sum(selectors) != 1:
+        return {"success": False, "error": "Provide exactly one of project_id, old_path, or name."}
+
+    cmd = ["project", "relink"]
+    if args.get("project_id") is not None:
+        cmd.extend(["--project-id", str(args["project_id"])])
+    if old_path := args.get("old_path"):
+        cmd.extend(["--old-path", old_path])
+    if name := args.get("name"):
+        cmd.extend(["--name", name])
+    if new_path := args.get("new_path"):
+        cmd.extend(["--new-path", new_path])
+    if new_name := args.get("new_name"):
+        cmd.extend(["--new-name", new_name])
+
+    r = _run_plan_cmd(workspace_dir, cmd)
+    display = "Relinked project to current workspace.\n\n" + _fmt_project(r.get("result", {}))
+    return _with_display(r, display)
 
 
 # ── Config command handlers ──
