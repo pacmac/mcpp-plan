@@ -21,6 +21,9 @@ DEFAULTS: dict[str, Any] = {
     "web": {
         "key": "",
     },
+    "attachments": {
+        "inline_lines": 100,
+    },
 }
 
 STEP_TOOLS: frozenset[str] = frozenset({

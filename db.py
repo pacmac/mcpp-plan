@@ -23,7 +23,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-LATEST_SCHEMA_VERSION = 12
+LATEST_SCHEMA_VERSION = 13
 
 
 # ── Central DB path ──

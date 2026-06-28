@@ -115,6 +115,14 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_project_select` | Select active project by ID (hidden from agents, requires `web.key`) |
 | `plan_project_relink` | Relink an existing project after moving or renaming its workspace |
 
+### File attachment tools
+
+| Tool | Description |
+|------|-------------|
+| `plan_file_attach` | Attach a workspace-relative file to a project, task, or step |
+| `plan_file_detach` | Remove an attachment by ID (does not delete the file) |
+| `plan_file_list` | List attachments for the active project, task, or step, with inline content |
+
 ### Report tools
 
 | Tool | Description |
@@ -334,6 +342,7 @@ When disabled:
 | `workflow` | `backup_retain_days` | `7` | Delete backups older than this many days |
 | `workflow` | `enable_steps` | `true` | Set `false` to hide step tools and strip step data |
 | `web` | `key` | `""` | Web API key for project selection (empty = disabled) |
+| `attachments` | `inline_lines` | `100` | Max lines of an attached file to inline in show output |
 
 ### Behavior
 
@@ -346,6 +355,46 @@ When disabled:
 
 - `plan_config_show` -- show current settings (merged defaults + overrides)
 - Config is read-only from MCP — edit `config.yaml` directly to change settings
+
+## File Attachments
+
+Attach workspace files (specs, design docs, READMEs) to a project, task, or step as a single source of truth. The file path is stored in the database; content is read from the file at display time — no duplication.
+
+```
+plan_file_attach  file_path="specs/feature.md"  scope=task  label="Feature spec"
+plan_file_attach  file_path="ARCHITECTURE.md"   scope=project
+plan_file_attach  file_path="steps/step1.md"    scope=step  kind=plan
+
+plan_file_list               # active task's attachments (with inline content)
+plan_file_list  scope=project
+plan_file_detach  id=3
+```
+
+### Scope
+
+| Scope | Attached to |
+|-------|-------------|
+| `task` (default) | Active task (context) |
+| `project` | The current project |
+| `step` | The active step |
+
+### Kind
+
+| Kind | Purpose |
+|------|---------|
+| `ref` (default) | General reference document |
+| `goal` | The file defines what needs to be achieved |
+| `plan` | The file defines how it will be done |
+
+### Path rules
+
+- Must be **relative** to the workspace root (`specs/feature.md`, not `/home/user/specs/feature.md`)
+- Must not escape the workspace (no `../` traversal)
+- The file does not need to exist at attach time — broken links are flagged with ⚠ on list
+
+### Inline display
+
+`plan_file_list`, `plan_project_show`, `plan_task_show`, and `plan_step_show` inline attached file content up to `attachment_inline_lines` (default 100). Files longer than that show a truncation notice.
 
 ## Migration safety
 

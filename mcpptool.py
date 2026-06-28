@@ -39,6 +39,41 @@ def _fmt_notes(notes: list[dict], label: str = "Notes") -> str:
     return "\n".join(lines)
 
 
+def _fmt_inline_attachments(workspace_dir: str, *, project_id=None, context_id=None, task_id=None) -> str:
+    """Load and format file attachments for inline display in show tools. Returns '' if none."""
+    try:
+        pkg_path = _pkg_path()
+        plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+        cfg_mod = _load_config_mod()
+        max_lines = cfg_mod.get_config().get("attachments", {}).get("inline_lines", 100)
+        db_path = plan_db_mod.default_db_path()
+        conn = plan_db_mod.connect(db_path)
+        plan_db_mod.ensure_schema(conn)
+        try:
+            attachments = plan_ctx.list_attachments(
+                conn, workspace_dir,
+                project_id=project_id, context_id=context_id, task_id=task_id,
+            )
+        finally:
+            conn.close()
+        if not attachments:
+            return ""
+        lines = ["\n**Attachments**"]
+        for a in attachments:
+            label_tag = f" — {a['label']}" if a.get("label") else ""
+            if a["broken"]:
+                lines.append(f"  `{a['file_path']}` ({a['kind']}){label_tag} ⚠ file not found")
+            else:
+                c = plan_ctx.read_attachment_content(a["file_path"], workspace_dir, max_lines)
+                lines.append(f"  `{a['file_path']}` ({a['kind']}){label_tag}")
+                lines.append(f"```\n{c['content']}\n```")
+                if c["truncated"]:
+                    lines.append(f"  *({c['line_count']} lines total — truncated at {max_lines})*")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 def _fmt_task_show(data: dict) -> str:
     name = data.get("context_name", "?")
     title = data.get("context_title", name)
@@ -702,6 +737,10 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_project_set": _cmd_project_set,
         "plan_project_select": _cmd_project_select,
         "plan_project_relink": _cmd_project_relink,
+        # File attachment tools
+        "plan_file_attach": _cmd_file_attach,
+        "plan_file_detach": _cmd_file_detach,
+        "plan_file_list": _cmd_file_list,
         # Config tools
         "plan_config_show": _cmd_config_show,
         # plan_config_set removed — config is operator-only (edit config.yaml directly)
@@ -870,7 +909,9 @@ def _cmd_task_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     cmd.append("--json")
 
     r = _run_plan_cmd(workspace_dir, cmd)
-    return _with_display(r, _fmt_task_show(r.get("result", {})))
+    display = _fmt_task_show(r.get("result", {}))
+    display += _fmt_inline_attachments(workspace_dir, context_id=r.get("result", {}).get("context_id"))
+    return _with_display(r, display)
 
 
 def _cmd_task_status(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -1007,7 +1048,9 @@ def _cmd_step_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     cmd.append("--json")
 
     r = _run_plan_cmd(workspace_dir, cmd)
-    return _with_display(r, _fmt_step_show(r.get("result", {})))
+    display = _fmt_step_show(r.get("result", {}))
+    display += _fmt_inline_attachments(workspace_dir, task_id=r.get("result", {}).get("id"))
+    return _with_display(r, display)
 
 
 def _cmd_step_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -1201,7 +1244,9 @@ def _fmt_project(data: dict) -> str:
 def _cmd_project_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """plan project show"""
     r = _run_plan_cmd(workspace_dir, ["project", "show"])
-    return _with_display(r, _fmt_project(r.get("result", {})))
+    display = _fmt_project(r.get("result", {}))
+    display += _fmt_inline_attachments(workspace_dir, project_id=r.get("result", {}).get("id"))
+    return _with_display(r, display)
 
 
 def _cmd_project_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -1307,6 +1352,128 @@ def _cmd_project_relink(workspace_dir: str, args: dict[str, Any]) -> dict[str, A
     r = _run_plan_cmd(workspace_dir, cmd)
     display = "Relinked project to current workspace.\n\n" + _fmt_project(r.get("result", {}))
     return _with_display(r, display)
+
+
+# ── File attachment command handlers ──
+
+def _cmd_file_attach(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Attach a workspace-relative file to a project, task, or step."""
+    file_path = args.get("file_path")
+    if not file_path:
+        return {"success": False, "error": "file_path is required."}
+
+    scope = args.get("scope", "task")
+    label = args.get("label")
+    kind = args.get("kind", "ref")
+
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        context_id = None
+        task_id = None
+        pid = None
+
+        if scope == "project":
+            pid = project_id
+        elif scope == "step":
+            context_id = plan_ctx.resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+            state = conn.execute(
+                "SELECT active_task_id FROM context_state WHERE context_id = ?", (context_id,)
+            ).fetchone()
+            if not state or not state["active_task_id"]:
+                return {"success": False, "error": "No active step to attach to."}
+            task_id = state["active_task_id"]
+            context_id = None
+        else:
+            context_id = plan_ctx.resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+
+        result = plan_ctx.attach_file(
+            conn, file_path, workspace_dir,
+            label=label, kind=kind,
+            project_id=pid, context_id=context_id, task_id=task_id,
+        )
+        scope_label = {"project": "project", "step": "step", "task": "task"}[scope]
+        display = f"Attached `{file_path}` to {scope_label} (id:{result['id']})"
+        if label:
+            display += f" — {label}"
+        return {"success": True, "result": result, "display": display}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_file_detach(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Remove a file attachment by ID."""
+    attachment_id = args.get("id")
+    if attachment_id is None:
+        return {"success": False, "error": "id is required."}
+
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    db_path = plan_db_mod.default_db_path()
+    conn = plan_db_mod.connect(db_path)
+    plan_db_mod.ensure_schema(conn)
+    try:
+        plan_ctx.detach_file(conn, int(attachment_id))
+        return {"success": True, "result": {}, "display": f"Attachment {attachment_id} removed."}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_file_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """List file attachments for a project, task, or step."""
+    scope = args.get("scope", "task")
+
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    cfg_mod = _load_config_mod()
+    max_lines = cfg_mod.get_config().get("attachments", {}).get("inline_lines", 100)
+    try:
+        context_id = None
+        task_id = None
+        pid = None
+
+        if scope == "project":
+            pid = project_id
+        elif scope == "step":
+            ctx_id = plan_ctx.resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+            state = conn.execute(
+                "SELECT active_task_id FROM context_state WHERE context_id = ?", (ctx_id,)
+            ).fetchone()
+            if not state or not state["active_task_id"]:
+                return {"success": False, "error": "No active step."}
+            task_id = state["active_task_id"]
+        else:
+            context_id = plan_ctx.resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+
+        attachments = plan_ctx.list_attachments(
+            conn, workspace_dir,
+            project_id=pid, context_id=context_id, task_id=task_id,
+        )
+
+        lines = [f"**Attachments** ({scope})"]
+        for a in attachments:
+            broken_tag = " ⚠ broken" if a["broken"] else ""
+            label_tag = f" — {a['label']}" if a.get("label") else ""
+            lines.append(f"\n[{a['id']}] `{a['file_path']}` ({a['kind']}){label_tag}{broken_tag}")
+            if not a["broken"]:
+                content_data = plan_ctx.read_attachment_content(a["file_path"], workspace_dir, max_lines)
+                lines.append(f"```\n{content_data['content']}\n```")
+                if content_data["truncated"]:
+                    lines.append(f"*({content_data['line_count']} lines total — truncated at {max_lines})*")
+        if not attachments:
+            lines.append("No attachments.")
+
+        return {"success": True, "result": {"attachments": attachments}, "display": "\n".join(lines)}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
 
 
 # ── Config command handlers ──

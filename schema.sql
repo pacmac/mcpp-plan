@@ -110,6 +110,24 @@ CREATE TABLE IF NOT EXISTS changelog (
     FOREIGN KEY (task_id) REFERENCES tasks(id)
 );
 
+CREATE TABLE IF NOT EXISTS attachments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path   TEXT NOT NULL,
+    label       TEXT,
+    kind        TEXT NOT NULL DEFAULT 'ref',
+    project_id  INTEGER REFERENCES project(id),
+    context_id  INTEGER REFERENCES contexts(id),
+    task_id     INTEGER REFERENCES tasks(id),
+    created_at  TEXT NOT NULL,
+    CHECK (
+        (project_id IS NOT NULL) + (context_id IS NOT NULL) + (task_id IS NOT NULL) = 1
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_project  ON attachments(project_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_context  ON attachments(context_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_task     ON attachments(task_id);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_context_status ON tasks(context_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes(task_id);

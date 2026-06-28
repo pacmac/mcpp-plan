@@ -2136,3 +2136,132 @@ def get_task_report_data(
         "steps": steps_data,
         "active_step": active_step_num,
     }
+
+
+# ── File Attachments ──────────────────────────────────────────────────────────
+
+VALID_ATTACHMENT_KINDS = ("ref", "goal", "plan")
+
+
+def _validate_attachment_path(file_path: str, workspace_dir: str) -> str:
+    """Return resolved absolute path; raise ValueError if unsafe or outside workspace."""
+    from pathlib import Path
+    fp = Path(file_path)
+    if fp.is_absolute():
+        raise ValueError(f"file_path must be relative, got: {file_path!r}")
+    workspace = Path(workspace_dir).resolve()
+    resolved = (workspace / fp).resolve()
+    try:
+        resolved.relative_to(workspace)
+    except ValueError:
+        raise ValueError(f"file_path escapes workspace: {file_path!r}")
+    return str(resolved)
+
+
+def attach_file(
+    conn,
+    file_path: str,
+    workspace_dir: str,
+    *,
+    label: str | None = None,
+    kind: str = "ref",
+    project_id: int | None = None,
+    context_id: int | None = None,
+    task_id: int | None = None,
+) -> dict:
+    """Attach a workspace-relative file to a project, task, or step."""
+    if kind not in VALID_ATTACHMENT_KINDS:
+        raise ValueError(f"Invalid kind '{kind}'. Must be one of: {', '.join(VALID_ATTACHMENT_KINDS)}")
+    targets = [project_id, context_id, task_id]
+    if sum(t is not None for t in targets) != 1:
+        raise ValueError("Exactly one of project_id, context_id, or task_id must be provided.")
+    _validate_attachment_path(file_path, workspace_dir)
+    now = db.utc_now_iso()
+    conn.execute("BEGIN")
+    try:
+        cur = conn.execute(
+            "INSERT INTO attachments (file_path, label, kind, project_id, context_id, task_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (file_path, label, kind, project_id, context_id, task_id, now),
+        )
+        attachment_id = int(cur.lastrowid)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"id": attachment_id, "file_path": file_path, "label": label, "kind": kind}
+
+
+def detach_file(conn, attachment_id: int) -> None:
+    """Remove an attachment by ID."""
+    conn.execute("BEGIN")
+    try:
+        row = conn.execute("SELECT id FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"Attachment id {attachment_id} not found.")
+        conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def list_attachments(
+    conn,
+    workspace_dir: str,
+    *,
+    project_id: int | None = None,
+    context_id: int | None = None,
+    task_id: int | None = None,
+) -> list[dict]:
+    """List attachments for a project, task, or step with broken-link detection."""
+    from pathlib import Path
+    targets = [project_id, context_id, task_id]
+    if sum(t is not None for t in targets) != 1:
+        raise ValueError("Exactly one of project_id, context_id, or task_id must be provided.")
+    if project_id is not None:
+        rows = conn.execute(
+            "SELECT id, file_path, label, kind, created_at FROM attachments WHERE project_id = ? ORDER BY id",
+            (project_id,),
+        ).fetchall()
+    elif context_id is not None:
+        rows = conn.execute(
+            "SELECT id, file_path, label, kind, created_at FROM attachments WHERE context_id = ? ORDER BY id",
+            (context_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, file_path, label, kind, created_at FROM attachments WHERE task_id = ? ORDER BY id",
+            (task_id,),
+        ).fetchall()
+    workspace = Path(workspace_dir).resolve()
+    return [
+        {
+            "id": row["id"],
+            "file_path": row["file_path"],
+            "label": row["label"],
+            "kind": row["kind"],
+            "created_at": row["created_at"],
+            "broken": not (workspace / row["file_path"]).exists(),
+        }
+        for row in rows
+    ]
+
+
+def read_attachment_content(file_path: str, workspace_dir: str, max_lines: int = 100) -> dict:
+    """Read a workspace-relative file for inline display."""
+    from pathlib import Path
+    full_path = (Path(workspace_dir).resolve() / file_path)
+    if not full_path.exists():
+        return {"content": None, "broken": True, "line_count": 0, "truncated": False}
+    try:
+        lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as e:
+        return {"content": None, "broken": True, "line_count": 0, "truncated": False, "error": str(e)}
+    truncated = len(lines) > max_lines
+    return {
+        "content": "\n".join(lines[:max_lines]),
+        "broken": False,
+        "line_count": len(lines),
+        "truncated": truncated,
+    }

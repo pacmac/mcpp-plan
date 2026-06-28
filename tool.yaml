@@ -344,6 +344,48 @@ tools:
           type: string
           description: "Optional new project name"
 
+  # ── File attachment tools ──
+  - name: plan_file_attach
+    description: "Attach a workspace-relative file to a project, task, or step as a single source of truth. Content is read from the file at display time, not stored in the database."
+    inputSchema:
+      type: object
+      required: [file_path]
+      properties:
+        file_path:
+          type: string
+          description: "Path to the file, relative to the workspace root (e.g. 'specs/feature.md')"
+        scope:
+          type: string
+          enum: [project, task, step]
+          description: "What to attach to: 'task' (default), 'project', or 'step'"
+        kind:
+          type: string
+          enum: [ref, goal, plan]
+          description: "Role of the attachment: 'ref' (default), 'goal', or 'plan'"
+        label:
+          type: string
+          description: "Optional short description of the file"
+
+  - name: plan_file_detach
+    description: "Remove a file attachment by ID (does not delete the file itself)"
+    inputSchema:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: integer
+          description: "Attachment ID to remove (from plan_file_list)"
+
+  - name: plan_file_list
+    description: "List file attachments for the active project, task, or step, with inline file content"
+    inputSchema:
+      type: object
+      properties:
+        scope:
+          type: string
+          enum: [project, task, step]
+          description: "Scope to list: 'task' (default), 'project', or 'step'"
+
   # ── Config tools ──
   - name: plan_config_show
     description: "Show current configuration (merged defaults + config.yaml overrides)"
