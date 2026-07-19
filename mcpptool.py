@@ -798,7 +798,6 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
             pkg_path = _pkg_path()
             plan_db_mod, plan_ctx = _load_pkg(pkg_path)
             conn, project, _is_new, _user_id, _proj_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
-            conn.close()
 
             # Inject project name into all result dicts
             if project and isinstance(result.get("result"), dict):
@@ -819,6 +818,25 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
                     _project_nudge_sent = True
                 else:
                     _project_nudge_sent = True
+
+            # Nag: any task in this project where all steps are done but task not closed
+            if tool_name != "plan_task_complete" and _proj_id:
+                rows = conn.execute(
+                    "SELECT c.name FROM contexts c "
+                    "WHERE c.project_id = ? AND c.status = 'active' "
+                    "AND (SELECT COUNT(*) FROM tasks t WHERE t.context_id = c.id AND t.is_deleted = 0) > 0 "
+                    "AND (SELECT COUNT(*) FROM tasks t WHERE t.context_id = c.id AND t.is_deleted = 0 AND t.status != 'complete') = 0",
+                    (_proj_id,),
+                ).fetchall()
+                if rows:
+                    names = ", ".join(f"`{r[0]}`" for r in rows)
+                    nag = (
+                        f"\n\n---\n⚠ {len(rows)} task(s) have all steps complete but are not closed: "
+                        f"{names}. Call `plan_task_complete` for each."
+                    )
+                    result["display"] = (result.get("display", "") + nag)
+
+            conn.close()
         except Exception:
             pass
 
