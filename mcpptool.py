@@ -1333,10 +1333,12 @@ def _cmd_project_select(workspace_dir: str, args: dict[str, Any]) -> dict[str, A
 
 def _cmd_project_set(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """plan project set [--name <name>] [--description <desc>]"""
-    # If web.key is configured, require it for project_set
+    # If web.key is configured AND this is a web request (no real workspace), require the key.
+    # Local agents with a real workspace_dir are always allowed to set project metadata.
     cfg_mod = _load_config_mod()
     configured_key = cfg_mod.get_config().get("web", {}).get("key", "")
-    if configured_key:
+    is_web_request = configured_key and not Path(workspace_dir).is_dir()
+    if is_web_request:
         provided_key = args.get("key")
         if not cfg_mod.check_web_key(provided_key):
             return {"success": False, "error": "Invalid or missing web API key. project_set requires 'key' when web.key is configured."}
