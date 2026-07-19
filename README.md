@@ -397,6 +397,25 @@ plan_file_detach  id=3
 
 `plan_file_list`, `plan_project_show`, `plan_task_show`, and `plan_step_show` inline attached file content up to `attachment_inline_lines` (default 100). Files longer than that show a truncation notice.
 
+## Automated reminders
+
+mcpp-plan injects contextual reminders into tool responses to keep the project clean.
+
+### Done-but-not-closed nag
+
+Every tool response checks whether any task in the current project has all steps marked complete but was never closed with `plan_task_complete`. If found, a warning is appended:
+
+```
+⚠ 2 task(s) have all steps complete but are not closed: `build-auth`, `fix-search`.
+  Call plan_task_complete for each.
+```
+
+This fires on every call until the tasks are closed. The goal is zero outstanding tasks per project. Suppressed during a `plan_task_complete` call itself.
+
+### Project info nudge
+
+If the current project has no name or description set, a one-time nudge prompts the agent to call `plan_project_set`. Suppressed once set.
+
 ## Migration safety
 
 Schema migrations are protected by a multi-layer safety pipeline (`backup.py`):
