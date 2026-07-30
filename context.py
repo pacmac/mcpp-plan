@@ -1096,6 +1096,76 @@ def list_projects(conn) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def move_task(conn, context_id: int, target_project_id: int) -> dict:
+    """Move a task (context) to a different project. Returns move summary with attachment paths."""
+    from pathlib import Path
+
+    ctx_row = conn.execute(
+        "SELECT id, name, project_id FROM contexts WHERE id = ?", (context_id,)
+    ).fetchone()
+    if ctx_row is None:
+        raise ValueError(f"Task id {context_id} not found.")
+
+    source_project = get_project(conn, project_id=ctx_row["project_id"])
+    target_project = get_project(conn, project_id=target_project_id)
+    if target_project is None:
+        raise ValueError(f"Target project id {target_project_id} not found.")
+    if source_project["id"] == target_project["id"]:
+        raise ValueError("Source and target project are the same.")
+
+    clash = conn.execute(
+        "SELECT id FROM contexts WHERE project_id = ? AND name = ?",
+        (target_project_id, ctx_row["name"]),
+    ).fetchone()
+    if clash:
+        raise ValueError(
+            f"Target project '{target_project['project_name']}' already has a task named '{ctx_row['name']}'."
+        )
+
+    # Collect context-level attachments before move for path reporting
+    att_rows = conn.execute(
+        "SELECT file_path FROM attachments WHERE context_id = ? ORDER BY id",
+        (context_id,),
+    ).fetchall()
+    src_path = Path(source_project["absolute_path"])
+    tgt_path = Path(target_project["absolute_path"])
+    attachments = [
+        {
+            "file_path": r["file_path"],
+            "from": str(src_path / r["file_path"]),
+            "to": str(tgt_path / r["file_path"]),
+        }
+        for r in att_rows
+    ]
+
+    now = db.utc_now_iso()
+    conn.execute("BEGIN")
+    try:
+        conn.execute(
+            "UPDATE contexts SET project_id = ?, updated_at = ? WHERE id = ?",
+            (target_project_id, now, context_id),
+        )
+        conn.execute(
+            "DELETE FROM user_state WHERE active_context_id = ?", (context_id,)
+        )
+        conn.execute(
+            "UPDATE global_state SET active_context_id = NULL WHERE active_context_id = ?",
+            (context_id,),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+    return {
+        "context_id": context_id,
+        "name": ctx_row["name"],
+        "from_project": dict(source_project),
+        "to_project": dict(target_project),
+        "attachments": attachments,
+    }
+
+
 def get_active_project_override(conn, user_id: int) -> int | None:
     """Return the user's project override ID, or None if not set."""
     row = conn.execute(

@@ -120,6 +120,19 @@ tools:
       required:
         - id
 
+  - name: plan_task_move
+    description: "Move a task to a different project. Reports any attached files with full source and target paths so they can be moved manually on disk."
+    inputSchema:
+      type: object
+      required: [name, project]
+      properties:
+        name:
+          type: string
+          description: "Task name to move"
+        project:
+          type: string
+          description: "Target project name (or numeric ID if name is ambiguous)"
+
   - name: plan_task_adopt
     description: "Adopt (deep-copy) another user's task into your own task list. Copies all steps, notes (goal/plan/note), and step notes. Does NOT copy changelog."
     inputSchema:

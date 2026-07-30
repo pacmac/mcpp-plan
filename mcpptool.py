@@ -747,6 +747,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         # plan_config_set removed — config is operator-only (edit config.yaml directly)
         # Task adoption
         "plan_task_adopt": _cmd_task_adopt,
+        "plan_task_move": _cmd_task_move,
         # Report tools
         "plan_project_report": _cmd_project_report,
         "plan_task_report": _cmd_task_report,
@@ -1043,6 +1044,66 @@ def _cmd_task_adopt(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         display = f"Adopted task **{name}**" + (f" as **{new_name}**" if new_name else "") + "\n\n"
         display += _fmt_task_show(result)
         return _with_display({"success": True, "result": result}, display)
+    finally:
+        conn.close()
+
+
+def _cmd_task_move(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Move a task to a different project."""
+    name = args.get("name")
+    project_ref = args.get("project")
+    if not name:
+        return {"success": False, "error": "name is required"}
+    if not project_ref:
+        return {"success": False, "error": "project is required (target project name or id)"}
+
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        # Resolve source context
+        try:
+            context_id = plan_ctx.resolve_context_id(conn, name, project_id=project_id)
+        except Exception:
+            return {"success": False, "error": f"Task '{name}' not found in current project."}
+
+        # Resolve target project — by id if numeric, else by name
+        if str(project_ref).isdigit():
+            target_project = plan_ctx.get_project(conn, project_id=int(project_ref))
+        else:
+            rows = conn.execute(
+                "SELECT id FROM project WHERE project_name = ?", (project_ref,)
+            ).fetchall()
+            if not rows:
+                return {"success": False, "error": f"Target project '{project_ref}' not found."}
+            if len(rows) > 1:
+                ids = ", ".join(str(r[0]) for r in rows)
+                return {"success": False, "error": f"Project name '{project_ref}' is ambiguous (ids: {ids}). Use numeric id instead."}
+            target_project = plan_ctx.get_project(conn, project_id=rows[0][0])
+
+        if not target_project:
+            return {"success": False, "error": f"Target project '{project_ref}' not found."}
+
+        try:
+            result = plan_ctx.move_task(conn, context_id, target_project["id"])
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
+        src = result["from_project"]
+        tgt = result["to_project"]
+        lines = [
+            f"Moved task `{result['name']}` from **{src['project_name']}** to **{tgt['project_name']}**",
+            f"  From: `{src['absolute_path']}`",
+            f"  To:   `{tgt['absolute_path']}`",
+        ]
+        if result["attachments"]:
+            lines.append("\nAttached files — move manually:")
+            for a in result["attachments"]:
+                lines.append(f"  `{a['from']}`  →  `{a['to']}`")
+        else:
+            lines.append("\nNo attached files to move.")
+
+        return {"success": True, "result": result, "display": "\n".join(lines)}
     finally:
         conn.close()
 
