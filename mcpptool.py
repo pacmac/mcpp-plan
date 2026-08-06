@@ -273,12 +273,13 @@ def _open_db(plan_db_mod, plan_ctx, workspace_dir: Path):
     plan_db_mod.ensure_schema(conn)
     user_id = plan_db_mod.get_or_create_user(conn, plan_db_mod.get_os_user())
 
-    # Check for project override
-    override_id = plan_ctx.get_active_project_override(conn, user_id)
-    if override_id is not None:
-        project = plan_ctx.get_project(conn, project_id=override_id)
-        if project:
-            return conn, project, False, user_id, project["id"]
+    # Check for project override — web requests only (workspace_dir is not a real dir)
+    if not Path(workspace_dir).is_dir():
+        override_id = plan_ctx.get_active_project_override(conn, user_id)
+        if override_id is not None:
+            project = plan_ctx.get_project(conn, project_id=override_id)
+            if project:
+                return conn, project, False, user_id, project["id"]
 
     project, is_new = plan_ctx.ensure_project(conn, str(workspace_dir))
     project_id = project["id"]
