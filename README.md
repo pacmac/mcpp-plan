@@ -317,6 +317,7 @@ workflow:
   daily_backup: true               # create one backup per day on first use
   backup_retain_days: 7            # delete backups older than this many days
   enable_steps: true               # set false to hide step tools and strip step data
+  stale_task_days: 0               # nag when a task has no activity for N days (0 = disabled)
 
 web:
   key: ""                          # web API key (empty = disabled, set to enable project selection)

@@ -17,6 +17,7 @@ DEFAULTS: dict[str, Any] = {
         "daily_backup": True,
         "backup_retain_days": 7,
         "enable_steps": True,
+        "stale_task_days": 0,
     },
     "web": {
         "key": "",

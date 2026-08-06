@@ -868,6 +868,30 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
                     )
                     result["display"] = (result.get("display", "") + nag)
 
+            # Nag: active tasks with no activity for stale_task_days days
+            _stale_days = _load_config_mod().get_config().get("workflow", {}).get("stale_task_days", 0)
+            if _stale_days and _proj_id:
+                stale_rows = conn.execute(
+                    "SELECT c.name FROM contexts c "
+                    "WHERE c.project_id = ? AND c.status = 'active' "
+                    "AND MAX("
+                    "    c.updated_at,"
+                    "    COALESCE("
+                    "        (SELECT MAX(t.updated_at) FROM tasks t"
+                    "         WHERE t.context_id = c.id AND t.is_deleted = 0),"
+                    "        c.updated_at"
+                    "    )"
+                    ") < datetime('now', ?)",
+                    (_proj_id, f"-{_stale_days} days"),
+                ).fetchall()
+                if stale_rows:
+                    snames = ", ".join(f"`{r[0]}`" for r in stale_rows)
+                    stale_nag = (
+                        f"\n\n---\n⚠ {len(stale_rows)} task(s) have had no activity"
+                        f" for {_stale_days}+ days: {snames}. Review or close."
+                    )
+                    result["display"] = (result.get("display", "") + stale_nag)
+
             conn.close()
         except Exception:
             pass
