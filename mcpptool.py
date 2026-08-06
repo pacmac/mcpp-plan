@@ -97,6 +97,22 @@ def _fmt_task_show(data: dict) -> str:
     return "\n".join(lines)
 
 
+def _fmt_task_titles_only(data: dict) -> str:
+    name = data.get("context_name", "?")
+    title = data.get("context_title", name)
+    active_num = data.get("active_task_number")
+    lines = [f"**{name}**: {title}"]
+    for t in data.get("tasks", []):
+        if t.get("is_deleted"):
+            continue
+        num = t["task_number"]
+        status = t["status"]
+        marker = {"planned": " ", "started": ">", "complete": "x"}.get(status, " ")
+        pointer = " <--" if num == active_num else ""
+        lines.append(f"  [{marker}] {num}. {t['title']}{pointer}")
+    return "\n".join(lines)
+
+
 def _fmt_task_status(data: dict) -> str:
     name = data.get("context_name", "?")
     title = data.get("context_title", name)
@@ -509,7 +525,19 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         step_id, step_number = plan_ctx.create_step(
                             conn, task_ref, title, description_md=description_md, user_id=_user_id, project_id=_project_id
                         )
-                        result = plan_ctx.get_step_summary(conn, step_number=step_number, user_id=_user_id, project_id=_project_id)
+                        if task_ref:
+                            # get_step_summary resolves via active context — wrong when task_ref
+                            # differs. Query by step_id directly to avoid false "not found" error.
+                            row = conn.execute(
+                                "SELECT id, context_id, task_number, title, description_md, status, "
+                                "parent_id, sort_index, sub_index, created_at, updated_at, completed_at "
+                                "FROM tasks WHERE id = ?",
+                                (step_id,),
+                            ).fetchone()
+                            result = dict(row) if row else {}
+                            result["notes"] = []
+                        else:
+                            result = plan_ctx.get_step_summary(conn, step_number=step_number, user_id=_user_id, project_id=_project_id)
                         return {"success": True, "result": result}
 
                     elif action == "delete":
@@ -749,6 +777,8 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         # Task adoption
         "plan_task_adopt": _cmd_task_adopt,
         "plan_task_move": _cmd_task_move,
+        "plan_task_rename": _cmd_task_rename,
+        "plan_step_retitle": _cmd_step_retitle,
         # Report tools
         "plan_project_report": _cmd_project_report,
         "plan_task_report": _cmd_task_report,
@@ -930,8 +960,11 @@ def _cmd_task_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     cmd.append("--json")
 
     r = _run_plan_cmd(workspace_dir, cmd)
-    display = _fmt_task_show(r.get("result", {}))
-    display += _fmt_inline_attachments(workspace_dir, context_id=r.get("result", {}).get("context_id"))
+    if args.get("titles_only"):
+        display = _fmt_task_titles_only(r.get("result", {}))
+    else:
+        display = _fmt_task_show(r.get("result", {}))
+        display += _fmt_inline_attachments(workspace_dir, context_id=r.get("result", {}).get("context_id"))
     return _with_display(r, display)
 
 
@@ -1105,6 +1138,44 @@ def _cmd_task_move(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             lines.append("\nNo attached files to move.")
 
         return {"success": True, "result": result, "display": "\n".join(lines)}
+    finally:
+        conn.close()
+
+
+def _cmd_task_rename(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Rename a task's display title (contexts.description_md). Slug unchanged."""
+    name = args.get("name")
+    title = args.get("title")
+    if not name:
+        return {"success": False, "error": "name is required"}
+    if not title:
+        return {"success": False, "error": "title is required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.rename_task(conn, name, title, project_id=project_id)
+        return {"success": True, "result": result,
+                "display": f"Renamed `{name}` → {title}"}
+    finally:
+        conn.close()
+
+
+def _cmd_step_retitle(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Retitle a step by sub_index. Preserves status, completed_at, and order."""
+    number = args.get("number")
+    title = args.get("title")
+    if number is None:
+        return {"success": False, "error": "number is required"}
+    if not title:
+        return {"success": False, "error": "title is required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.retitle_step(conn, number, title, user_id=user_id, project_id=project_id)
+        return {"success": True, "result": result,
+                "display": f"Step {number} retitled → {title}"}
     finally:
         conn.close()
 
