@@ -65,6 +65,9 @@ tools:
         name:
           type: string
           description: "Task name (omit for active task)"
+        titles_only:
+          type: boolean
+          description: "Return only step numbers and titles (omits notes, goal, plan, attachments — use for large tasks)"
 
   - name: plan_task_status
     description: "Show the active task and current step"
@@ -132,6 +135,32 @@ tools:
         project:
           type: string
           description: "Target project name (or numeric ID if name is ambiguous)"
+
+  - name: plan_task_rename
+    description: "Rename a task's display title without changing its slug. Preserves all history."
+    inputSchema:
+      type: object
+      required: [name, title]
+      properties:
+        name:
+          type: string
+          description: "Task slug (name) to rename"
+        title:
+          type: string
+          description: "New display title"
+
+  - name: plan_step_retitle
+    description: "Retitle a step without affecting its status, completed_at, or order."
+    inputSchema:
+      type: object
+      required: [number, title]
+      properties:
+        number:
+          type: integer
+          description: "Step number to retitle"
+        title:
+          type: string
+          description: "New step title"
 
   - name: plan_task_adopt
     description: "Adopt (deep-copy) another user's task into your own task list. Copies all steps, notes (goal/plan/note), and step notes. Does NOT copy changelog."
