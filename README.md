@@ -79,6 +79,8 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_task_switch` | Switch to a different task |
 | `plan_task_complete` | Mark a task as completed |
 | `plan_task_move` | Move a task to a different project (reports attached files to move manually) |
+| `plan_task_rename` | Rename a task's display title (slug unchanged, history preserved) |
+| `plan_step_retitle` | Retitle a step (status/completed_at/order unchanged) |
 | `plan_task_adopt` | Adopt (deep-copy) another user's task into your own list |
 | `plan_task_notes_set` | Set a note on a task (upsert: goal/plan replace by kind, note updates by ID or creates new) |
 | `plan_task_notes_get` | View notes on a task (returns notes with IDs) |
