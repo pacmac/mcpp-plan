@@ -1166,6 +1166,39 @@ def move_task(conn, context_id: int, target_project_id: int) -> dict:
     }
 
 
+def rename_task(conn, context_name: str, new_title: str, project_id: int | None = None) -> dict:
+    """Rename a task's display title (contexts.description_md). Slug (name) is unchanged."""
+    context_id = resolve_context_id(conn, context_name, project_id=project_id)
+    now = db.utc_now_iso()
+    conn.execute(
+        "UPDATE contexts SET description_md = ?, updated_at = ? WHERE id = ?",
+        (new_title, now, context_id),
+    )
+    conn.commit()
+    return {"context_id": context_id, "name": context_name, "title": new_title}
+
+
+def retitle_step(conn, step_number: int, new_title: str,
+                 user_id: int | None = None, project_id: int | None = None) -> dict:
+    """Retitle a step by sub_index. Preserves status, completed_at, and order."""
+    task_number = _step_task_number(conn, step_number, user_id=user_id, project_id=project_id)
+    context_id = resolve_active_context_id(conn, user_id=user_id, project_id=project_id)
+    row = conn.execute(
+        "SELECT id FROM tasks WHERE context_id = ? AND task_number = ?",
+        (context_id, task_number),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Step {step_number} not found")
+    task_id = row["id"]
+    now = db.utc_now_iso()
+    conn.execute(
+        "UPDATE tasks SET title = ?, updated_at = ? WHERE id = ?",
+        (new_title, now, task_id),
+    )
+    conn.commit()
+    return {"task_id": task_id, "step_number": step_number, "title": new_title}
+
+
 def get_active_project_override(conn, user_id: int) -> int | None:
     """Return the user's project override ID, or None if not set."""
     row = conn.execute(
