@@ -1353,8 +1353,8 @@ def roadmap_all_data(conn, project_id):
         """
         SELECT a.name, a.description_md,
                COUNT(CASE WHEN c.status='active' THEN 1 END) AS open,
-               COUNT(CASE WHEN c.status='complete' THEN 1 END) AS complete,
-               MAX(CASE WHEN c.status='complete' THEN c.updated_at END) AS last_closed
+               COUNT(CASE WHEN c.status='completed' THEN 1 END) AS complete,
+               MAX(CASE WHEN c.status='completed' THEN c.completed_at END) AS last_closed
         FROM areas a
         LEFT JOIN contexts c ON c.project_id = a.project_id AND c.area = a.name
         WHERE a.project_id = ?
@@ -2312,8 +2312,8 @@ def complete_context(conn, name: str, user_id: int | None = None, project_id: in
         )
     now = db.utc_now_iso()
     conn.execute(
-        "UPDATE contexts SET status = 'completed', updated_at = ? WHERE id = ?",
-        (now, context_id),
+        "UPDATE contexts SET status = 'completed', completed_at = ?, updated_at = ? WHERE id = ?",
+        (now, now, context_id),
     )
 
 
