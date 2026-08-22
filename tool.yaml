@@ -187,7 +187,7 @@ tools:
 
   # ── Area tools ──
   - name: plan_area_new
-    description: "Define one or more functional areas for this project. Single: supply `name` (+ optional `description`). Batch: supply `items` list."
+    description: "Define one or more functional areas for this project. Single: supply `name` (+ optional `description`, `class`, `priority`). Batch: supply `items` list."
     inputSchema:
       type: object
       properties:
@@ -197,6 +197,13 @@ tools:
         description:
           type: string
           description: "What this area does (single-area mode)"
+        class:
+          type: string
+          enum: ["product", "tooling"]
+          description: "product = ships to users; tooling = builds, proves or reaches the product"
+        priority:
+          type: integer
+          description: "Ordering within class (lower = higher priority; omit to sort last)"
         items:
           type: array
           description: "Batch mode: list of areas to create atomically. Mutually exclusive with `name`."
@@ -210,6 +217,13 @@ tools:
               description_md:
                 type: string
                 description: "What this area does"
+              class:
+                type: string
+                enum: ["product", "tooling"]
+                description: "product or tooling"
+              priority:
+                type: integer
+                description: "Ordering within class"
 
   - name: plan_area_list
     description: "List functional areas defined for this project"
@@ -244,7 +258,7 @@ tools:
           description: "New area name"
 
   - name: plan_area_describe
-    description: "Set or update the description of an existing area. Pass empty string to clear."
+    description: "Set or update metadata on an existing area: description, class (product|tooling), and/or priority. Supply at least one."
     inputSchema:
       type: object
       required: [name]
@@ -255,6 +269,13 @@ tools:
         description:
           type: string
           description: "New description (markdown). Omit or pass empty string to clear."
+        class:
+          type: string
+          enum: ["product", "tooling"]
+          description: "product = ships; tooling = builds/proves/reaches the product"
+        priority:
+          type: integer
+          description: "Ordering within class (lower = higher priority)"
 
   - name: plan_area_delete
     description: "Delete an area. Refuses if any active tasks are still assigned to it."
