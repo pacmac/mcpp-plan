@@ -908,7 +908,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
                     "SELECT c.name FROM contexts c "
                     "WHERE c.project_id = ? AND c.status = 'active' "
                     "AND (SELECT COUNT(*) FROM tasks t WHERE t.context_id = c.id AND t.is_deleted = 0) > 0 "
-                    "AND (SELECT COUNT(*) FROM tasks t WHERE t.context_id = c.id AND t.is_deleted = 0 AND t.status != 'complete') = 0",
+                    "AND (SELECT COUNT(*) FROM tasks t WHERE t.context_id = c.id AND t.is_deleted = 0 AND t.status != 'completed') = 0",
                     (_proj_id,),
                 ).fetchall()
                 if rows:
