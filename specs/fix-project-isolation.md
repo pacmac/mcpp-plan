@@ -70,9 +70,78 @@ After:
                 return conn, project, False, user_id, project["id"]
 ```
 
+## Additional hardening (steps 2-4)
+
+### Step 2 — Hard error for non-absolute workspace_dir
+
+After the override check in `_open_db()`, before calling `ensure_project()`:
+
+```python
+if not Path(workspace_dir).is_absolute():
+    conn.close()
+    raise ValueError(
+        f"workspace_dir '{workspace_dir}' is not an absolute path — "
+        "cannot resolve project. Ensure the MCP server is configured with an absolute workspace."
+    )
+```
+
+`workspace_dir` defaults to `"."` in `execute()` when the context provides none. Calling
+`ensure_project(conn, ".")` creates a junk project at path `"."` that all undirected calls
+share. A hard error is better than silent mis-filing.
+
+### Step 3 — Clear stale active-context cursor in execute() injection
+
+In execute()'s injection block, after resolving `_user_id` and `_proj_id`, add:
+
+```python
+# Cross-check: active_context_id for this user+project must belong to this project.
+# If it points to a context in a different project (e.g. after task move), clear it.
+stale = conn.execute(
+    "SELECT us.active_context_id FROM user_state us "
+    "JOIN contexts c ON c.id = us.active_context_id "
+    "WHERE us.user_id = ? AND us.project_id = ? AND c.project_id != ?",
+    (_user_id, _proj_id, _proj_id),
+).fetchone()
+if stale:
+    plan_db_mod.upsert_user_state(conn, _user_id, _proj_id, None)
+    conn.commit()
+```
+
+This closes the write-through window that move_task's DELETE leaves open if a session
+already has the context cached as active. Located in the `try/except Exception: pass`
+injection block — failures are silent and non-blocking.
+
+### Step 4 — Exempt plan_project_select from web-key when project matches cwd
+
+In `_cmd_project_select()`, look up the project before the key check and skip the gate
+when the project's `absolute_path` matches `workspace_dir`:
+
+```python
+# Resolve project first to check for cwd self-select exemption
+project = plan_ctx.get_project(conn, project_id=project_id)
+if not project:
+    return {"success": False, "error": f"Project {project_id} not found."}
+
+project_path = project.get("absolute_path", "")
+is_self_select = (
+    Path(workspace_dir).is_dir()
+    and project_path
+    and Path(workspace_dir).resolve() == Path(project_path)
+)
+if not is_self_select and not cfg_mod.check_web_key(key):
+    return {"success": False, "error": "Invalid or missing web API key."}
+```
+
+Rationale: an agent in `/foo/bar` selecting project id=X where X's path is also `/foo/bar`
+is self-correcting, not crossing a trust boundary.
+
+## Files changing
+
+- `mcpptool.py` — `_open_db()` (step 1, done), `_open_db()` (step 2), execute() injection (step 3), `_cmd_project_select()` (step 4)
+
 ## Files NOT changing
 
-- `context.py` — `get_active_project_override()` is correct as-is
+- `context.py` — no changes
 - `db.py` — no schema changes
 - `tool.yaml` — no new tools
 - `README.md` — no user-facing behavioural change to document
@@ -80,12 +149,12 @@ After:
 ## Verification
 
 1. Start a local session in mcpp-plan with a node-dash override still in user_prefs.
-   Call `plan_project_show` — must return mcpp-plan, not node-dash.
-2. Call `plan_project_select` (web key, project_id=node-dash id) to set an override.
-   Call `plan_project_show` — local session must still return mcpp-plan (override ignored).
-3. Confirm web path still works: a call with a non-directory `workspace_dir` (simulate
-   by passing `.` when cwd is not a project) must use the override.
+   Call `plan_project_show` — must return mcpp-plan, not node-dash. (step 1)
+2. Call `plan_project_select` without a web key, with project_id matching the current
+   workspace — must succeed. (step 4)
+3. Simulate stale cursor: directly update user_state to point to a context from another
+   project; call any plan tool — cursor must be cleared and not cause a write-through. (step 3)
 
 ## source_hash
 
-mcpptool.py: 1849255665a8f3266cd3ad87a3fbab5c63027127939d0de68d35867150ebb1d9
+mcpptool.py: 2cc1439 (post-areas-tools-bugs commit)

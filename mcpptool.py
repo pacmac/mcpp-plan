@@ -297,6 +297,13 @@ def _open_db(plan_db_mod, plan_ctx, workspace_dir: Path):
             if project:
                 return conn, project, False, user_id, project["id"]
 
+    if not Path(workspace_dir).is_absolute():
+        conn.close()
+        raise ValueError(
+            f"workspace_dir '{workspace_dir}' is not an absolute path — "
+            "cannot resolve project. Ensure the MCP server is configured with an absolute workspace."
+        )
+
     project, is_new = plan_ctx.ensure_project(conn, str(workspace_dir))
     project_id = project["id"]
     return conn, project, is_new, user_id, project_id
@@ -856,6 +863,19 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
             pkg_path = _pkg_path()
             plan_db_mod, plan_ctx = _load_pkg(pkg_path)
             conn, project, _is_new, _user_id, _proj_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+
+            # Clear stale active-context cursor: active_context_id for this
+            # user+project must belong to this project (can drift after move_task).
+            if _user_id and _proj_id:
+                _stale = conn.execute(
+                    "SELECT us.active_context_id FROM user_state us "
+                    "JOIN contexts c ON c.id = us.active_context_id "
+                    "WHERE us.user_id = ? AND us.project_id = ? AND c.project_id != ?",
+                    (_user_id, _proj_id, _proj_id),
+                ).fetchone()
+                if _stale:
+                    plan_db_mod.upsert_user_state(conn, _user_id, _proj_id, None)
+                    conn.commit()
 
             # Inject project name into all result dicts
             if project and isinstance(result.get("result"), dict):
@@ -1596,13 +1616,15 @@ def _cmd_project_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
 def _cmd_project_select(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     """Select active project (web server only, key-gated). Pass project_id=0 to clear."""
     key = args.get("key")
-    cfg_mod = _load_config_mod()
-    if not cfg_mod.check_web_key(key):
-        return {"success": False, "error": "Invalid or missing web API key."}
-
     project_id = args.get("project_id")
     if project_id is None:
         return {"success": False, "error": "project_id is required"}
+
+    cfg_mod = _load_config_mod()
+
+    # project_id=0 (clear override) always requires web key
+    if project_id == 0 and not cfg_mod.check_web_key(key):
+        return {"success": False, "error": "Invalid or missing web API key."}
 
     pkg_path = _pkg_path()
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
@@ -1625,6 +1647,17 @@ def _cmd_project_select(workspace_dir: str, args: dict[str, Any]) -> dict[str, A
         project = plan_ctx.get_project(conn, project_id=project_id)
         if not project:
             return {"success": False, "error": f"Project {project_id} not found."}
+
+        # Self-select exemption: skip key gate when the requested project's path matches
+        # the caller's workspace (agent re-selecting its own project, not a cross-project switch).
+        project_path = project.get("absolute_path", "")
+        is_self_select = (
+            Path(workspace_dir).is_dir()
+            and bool(project_path)
+            and Path(workspace_dir).resolve() == Path(project_path)
+        )
+        if not is_self_select and not cfg_mod.check_web_key(key):
+            return {"success": False, "error": "Invalid or missing web API key."}
 
         plan_ctx.set_active_project_override(conn, user_id, project_id)
         return {
