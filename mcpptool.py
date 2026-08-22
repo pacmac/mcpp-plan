@@ -1369,7 +1369,8 @@ def _cmd_roadmap_focus(workspace_dir: str, args: dict[str, Any]) -> dict[str, An
         area_names = [a["name"] for a in all_areas]
         if not area_names:
             return {"success": False, "error": "no areas defined",
-                    "result": {"focus": None, "areas": [], "project_name": project_name}}
+                    "result": {"focus": None, "areas": [], "project_name": project_name},
+                    "display": f"No areas defined for **{project_name}**.\nUse `plan_area_new` to define areas first."}
         if area is None:
             focus = plan_ctx.get_focus_area(conn, user_id, project_id)
             if focus is None:
@@ -1406,10 +1407,13 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
         areas = data["areas"]
         unfiled = data["unfiled"]
         if not areas:
+            unfiled_note = (f"\n\n**IN NO AREA:** {len(unfiled)} active task(s) with no area assigned."
+                            if unfiled else "")
             return {"success": False,
                     "error": "no areas defined — use plan_area_new first",
                     "result": {"ranked": [], "parked": [], "unfiled": unfiled,
-                               "focus": None, "project_name": project_name}}
+                               "focus": None, "project_name": project_name},
+                    "display": f"**Roadmap next** (project: {project_name})\n\nNo areas defined. Use `plan_area_new` to create areas.{unfiled_note}"}
         focus = plan_ctx.get_focus_area(conn, user_id, project_id)
         ranked = sorted([a for a in areas if a["open"] > 0],
                         key=lambda a: a["open"], reverse=True)
@@ -1461,9 +1465,17 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
         areas = data["areas"]
         unfiled = data["unfiled"]
         if not areas:
+            unfiled_lines = []
+            if unfiled:
+                unfiled_lines = ["", f"**IN NO AREA** ({len(unfiled)} active task(s)):"]
+                unfiled_lines += [f"  - `{u['name']}`" for u in unfiled]
             return {"success": False,
                     "error": "no areas defined — use plan_area_new first",
-                    "result": {"areas": [], "unfiled": unfiled, "project_name": project_name}}
+                    "result": {"areas": [], "unfiled": unfiled, "project_name": project_name},
+                    "display": "\n".join([
+                        f"**Roadmap** (project: {project_name})", "",
+                        "No areas defined. Use `plan_area_new` to create areas.",
+                    ] + unfiled_lines)}
         lines = [f"**Roadmap** (project: {project_name})", ""]
         for a in areas:
             desc = f" — {a['description_md']}" if a.get("description_md") else ""
