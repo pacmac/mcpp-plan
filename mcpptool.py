@@ -1417,7 +1417,8 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
         focus = plan_ctx.get_focus_area(conn, user_id, project_id)
         ranked = sorted([a for a in areas if a["open"] > 0],
                         key=lambda a: a["open"], reverse=True)
-        parked = [a for a in areas if a["open"] == 0]
+        done = [a for a in areas if a["open"] == 0 and a["complete"] > 0]
+        never_examined = [a for a in areas if a["open"] == 0 and a["complete"] == 0]
         lines = [f"**Roadmap next** (project: {project_name})"]
         if focus:
             lines.append(f"Focus: **{focus}**")
@@ -1429,11 +1430,16 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
                 lines.append(f"  - **{a['name']}** — {a['open']} open task(s){marker}")
         else:
             lines.append("_No areas have open tasks._")
-        if parked:
+        if done:
             lines.append("")
-            lines.append("**Nothing open:**")
-            for a in parked:
-                lines.append(f"  - {a['name']} — nothing open")
+            lines.append("**Done:**")
+            for a in done:
+                lines.append(f"  - {a['name']} — {a['complete']} complete")
+        if never_examined:
+            lines.append("")
+            lines.append("**Never examined:**")
+            for a in never_examined:
+                lines.append(f"  - {a['name']}")
         if unfiled:
             lines.append("")
             lines.append(
@@ -1444,7 +1450,9 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
             "result": {
                 "ranked": [{"name": a["name"], "open": a["open"],
                             "why": f"{a['open']} open task(s)"} for a in ranked],
-                "parked": [{"name": a["name"], "open": 0, "why": "nothing open"} for a in parked],
+                "done": [{"name": a["name"], "complete": a["complete"]} for a in done],
+                "never_examined": [{"name": a["name"]} for a in never_examined],
+                "parked": [],
                 "unfiled": [{"name": u["name"]} for u in unfiled],
                 "focus": focus,
                 "project_name": project_name,
@@ -1479,7 +1487,13 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
         lines = [f"**Roadmap** (project: {project_name})", ""]
         for a in areas:
             desc = f" — {a['description_md']}" if a.get("description_md") else ""
-            lines.append(f"  - **{a['name']}**{desc}: {a['open']} open, {a['complete']} complete")
+            if a["open"] == 0 and a["complete"] > 0:
+                marker = " **(done)**"
+            elif a["open"] == 0 and a["complete"] == 0:
+                marker = " **(never examined)**"
+            else:
+                marker = ""
+            lines.append(f"  - **{a['name']}**{desc}: {a['open']} open, {a['complete']} complete{marker}")
         if unfiled:
             lines.append("")
             lines.append(f"**IN NO AREA** ({len(unfiled)} active task(s)):")
