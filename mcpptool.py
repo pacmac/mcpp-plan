@@ -1296,10 +1296,14 @@ def _cmd_area_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             return {"success": True, "result": {"created": len(created), "areas": created},
                     "display": f"Areas created ({len(created)}): {names}"}
         description_md = args.get("description")
+        area_class = args.get("class") or None
+        priority = args.get("priority")
         result = plan_ctx.create_area(conn, name, description_md=description_md,
-                                      project_id=project_id)
+                                      project_id=project_id, area_class=area_class,
+                                      priority=priority)
+        class_note = f" ({area_class})" if area_class else ""
         return {"success": True, "result": result,
-                "display": f"Area created: **{name}**"}
+                "display": f"Area created: **{name}**{class_note}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
@@ -1314,8 +1318,11 @@ def _cmd_area_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         areas = plan_ctx.list_areas(conn, project_id=project_id)
         lines = [f"**Areas** ({len(areas)})"]
         for a in areas:
-            desc = f" — {a['description_md']}" if a.get("description_md") else ""
-            lines.append(f"  - {a['name']}{desc}")
+            desc_line = (a.get("description_md") or "").split("\n")[0].strip()
+            desc = f" — {desc_line}" if desc_line else ""
+            cls = a.get("class") or "unclassed"
+            pri = f", priority {a['priority']}" if a.get("priority") is not None else ""
+            lines.append(f"  - {a['name']} ({cls}{pri}){desc}")
         display = "\n".join(lines) if areas else "No areas defined. Use `plan_area_new` to create one."
         return {"success": True, "result": {"areas": areas}, "display": display}
     finally:
@@ -1361,19 +1368,38 @@ def _cmd_area_delete(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
 
 def _cmd_area_describe(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     name = args.get("name")
-    description = args.get("description", "")
     if not name:
         return {"success": False, "error": "name is required"}
+    description = args.get("description")
+    area_class = args.get("class") or None
+    priority = args.get("priority")
+    _update_class = "class" in args
+    _update_priority = "priority" in args
+    _update_desc = "description" in args
+    if not any([_update_desc, _update_class, _update_priority]):
+        return {"success": False, "error": "supply at least one of: description, class, priority"}
     pkg_path = _pkg_path()
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
     try:
-        err = plan_ctx.update_area_description(conn, name, description, project_id=project_id)
+        err = plan_ctx.update_area_description(
+            conn, name, description or "", project_id=project_id,
+            area_class=area_class, priority=priority,
+            _update_class=_update_class, _update_priority=_update_priority,
+        )
         if err:
             return {"success": False, "error": err}
-        action = "cleared" if not description else f"updated"
-        return {"success": True, "result": {"name": name, "description_md": description or None},
-                "display": f"Description {action} for area **{name}**"}
+        parts = []
+        if _update_desc:
+            parts.append("description")
+        if _update_class:
+            parts.append(f"class={area_class or 'cleared'}")
+        if _update_priority:
+            parts.append(f"priority={priority}")
+        return {"success": True, "result": {"name": name},
+                "display": f"Updated **{name}**: {', '.join(parts)}"}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
     finally:
         conn.close()
 
@@ -1444,10 +1470,28 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
             lines.append(f"Focus: **{focus}**")
         lines.append("")
         if ranked:
-            lines.append("**Work now:**")
-            for a in ranked:
-                marker = " ← focus" if a["name"] == focus else ""
-                lines.append(f"  - **{a['name']}** — {a['open']} open task(s){marker}")
+            product_ranked = [a for a in ranked if a.get("class") == "product"]
+            tooling_ranked = [a for a in ranked if a.get("class") == "tooling"]
+            unclassed_ranked = [a for a in ranked if not a.get("class")]
+            def _ranked_rows(group):
+                rows = []
+                for a in group:
+                    marker = " ← focus" if a["name"] == focus else ""
+                    rows.append(f"  - **{a['name']}** — {a['open']} open task(s){marker}")
+                return rows
+            if product_ranked:
+                lines.append("**Work now — Product:**")
+                lines.extend(_ranked_rows(product_ranked))
+            if tooling_ranked:
+                if product_ranked:
+                    lines.append("")
+                lines.append("**Work now — Tooling:**")
+                lines.extend(_ranked_rows(tooling_ranked))
+            if unclassed_ranked:
+                if product_ranked or tooling_ranked:
+                    lines.append("")
+                lines.append("**Work now — Unclassed:**")
+                lines.extend(_ranked_rows(unclassed_ranked))
         else:
             lines.append("_No areas have open tasks._")
         if done:
@@ -1507,8 +1551,7 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                         f"**Roadmap** (project: {project_name})", "",
                         "No areas defined. Use `plan_area_new` to create areas.",
                     ] + unfiled_lines)}
-        lines = [f"**Roadmap** (project: {project_name})", ""]
-        for a in areas:
+        def _area_row(a):
             desc_line = (a.get("description_md") or "").split("\n")[0].strip()
             desc = f" — {desc_line}" if desc_line else ""
             if a["open"] == 0 and a["complete"] > 0:
@@ -1518,7 +1561,25 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                 marker = " **(never examined)**"
             else:
                 marker = ""
-            lines.append(f"  - **{a['name']}**{desc}: {a['open']} open, {a['complete']} complete{marker}")
+            return f"  - **{a['name']}**{desc}: {a['open']} open, {a['complete']} complete{marker}"
+
+        product = [a for a in areas if a.get("class") == "product"]
+        tooling = [a for a in areas if a.get("class") == "tooling"]
+        unclassed = [a for a in areas if not a.get("class")]
+        lines = [f"**Roadmap** (project: {project_name})", ""]
+        if product:
+            lines.append("**Product**")
+            lines.extend(_area_row(a) for a in product)
+        if tooling:
+            if product:
+                lines.append("")
+            lines.append("**Tooling**")
+            lines.extend(_area_row(a) for a in tooling)
+        if unclassed:
+            if product or tooling:
+                lines.append("")
+            lines.append("**Unclassed** (use `plan_area_describe` to set class)")
+            lines.extend(_area_row(a) for a in unclassed)
         if unfiled:
             total_open_steps = sum(u.get("open_steps") or 0 for u in unfiled)
             step_note = f" — {total_open_steps} open steps across these tasks" if total_open_steps > 0 else ""
