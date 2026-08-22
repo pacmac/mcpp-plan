@@ -1186,9 +1186,16 @@ def _validate_area_name(name: str) -> str:
     return name
 
 
-def create_area(conn, name: str, description_md=None, project_id=None) -> dict:
+def _validate_area_class(area_class):
+    if area_class is not None and area_class not in ("product", "tooling"):
+        raise ValueError(f"class must be 'product' or 'tooling', got '{area_class}'")
+
+
+def create_area(conn, name: str, description_md=None, project_id=None,
+                area_class=None, priority=None) -> dict:
     import sqlite3 as _sqlite3
     name = _validate_area_name(name)
+    _validate_area_class(area_class)
     clash = conn.execute(
         "SELECT name FROM areas WHERE project_id = ? AND LOWER(name) = LOWER(?)",
         (project_id, name),
@@ -1198,15 +1205,15 @@ def create_area(conn, name: str, description_md=None, project_id=None) -> dict:
     now = db.utc_now_iso()
     try:
         cur = conn.execute(
-            "INSERT INTO areas (project_id, name, description_md, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (project_id, name, description_md, now, now),
+            "INSERT INTO areas (project_id, name, description_md, class, priority, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (project_id, name, description_md, area_class, priority, now, now),
         )
     except _sqlite3.IntegrityError:
         raise ValueError(f"area '{name}' already exists in this project")
     conn.commit()
     return {"id": cur.lastrowid, "project_id": project_id, "name": name,
-            "description_md": description_md}
+            "description_md": description_md, "class": area_class, "priority": priority}
 
 
 def create_areas_batch(conn, items: list, project_id=None) -> list:
@@ -1223,6 +1230,9 @@ def create_areas_batch(conn, items: list, project_id=None) -> list:
         for item in items:
             name = _validate_area_name(item["name"])
             desc = item.get("description_md")
+            area_class = item.get("class")
+            priority = item.get("priority")
+            _validate_area_class(area_class)
             clash = conn.execute(
                 "SELECT name FROM areas WHERE project_id = ? AND LOWER(name) = LOWER(?)",
                 (project_id, name),
@@ -1232,12 +1242,13 @@ def create_areas_batch(conn, items: list, project_id=None) -> list:
                     f"area '{clash['name']}' already exists (while adding '{name}')"
                 )
             cur = conn.execute(
-                "INSERT INTO areas (project_id, name, description_md, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (project_id, name, desc, now, now),
+                "INSERT INTO areas (project_id, name, description_md, class, priority, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (project_id, name, desc, area_class, priority, now, now),
             )
             results.append({"id": cur.lastrowid, "project_id": project_id,
-                            "name": name, "description_md": desc})
+                            "name": name, "description_md": desc,
+                            "class": area_class, "priority": priority})
         conn.execute("RELEASE SAVEPOINT batch_area_new")
     except Exception:
         conn.execute("ROLLBACK TO SAVEPOINT batch_area_new")
@@ -1246,10 +1257,16 @@ def create_areas_batch(conn, items: list, project_id=None) -> list:
     return results
 
 
+_AREA_ORDER = (
+    "CASE WHEN class='product' THEN 0 WHEN class='tooling' THEN 1 ELSE 2 END, "
+    "COALESCE(priority, 999999), name"
+)
+
+
 def list_areas(conn, project_id=None) -> list:
     rows = conn.execute(
-        "SELECT id, project_id, name, description_md, created_at FROM areas "
-        "WHERE project_id = ? ORDER BY name",
+        f"SELECT id, project_id, name, description_md, class, priority, created_at FROM areas "
+        f"WHERE project_id = ? ORDER BY {_AREA_ORDER}",
         (project_id,),
     ).fetchall()
     return [dict(r) for r in rows]
@@ -1313,7 +1330,10 @@ def delete_area(conn, name: str, project_id=None) -> dict:
     return {"deleted": name, "project_id": project_id}
 
 
-def update_area_description(conn, name: str, description_md: str, project_id=None):
+def update_area_description(conn, name: str, description_md: str, project_id=None,
+                            area_class=None, priority=None, _update_class=False,
+                            _update_priority=False):
+    _validate_area_class(area_class)
     row = conn.execute(
         "SELECT id FROM areas WHERE project_id = ? AND name = ?",
         (project_id, name),
@@ -1321,10 +1341,16 @@ def update_area_description(conn, name: str, description_md: str, project_id=Non
     if not row:
         return f"area '{name}' not found in this project"
     now = db.utc_now_iso()
-    conn.execute(
-        "UPDATE areas SET description_md = ?, updated_at = ? WHERE id = ?",
-        (description_md or None, now, row["id"]),
-    )
+    sets = ["description_md = ?", "updated_at = ?"]
+    params = [description_md or None, now]
+    if _update_class:
+        sets.append("class = ?")
+        params.append(area_class)
+    if _update_priority:
+        sets.append("priority = ?")
+        params.append(priority)
+    params.append(row["id"])
+    conn.execute(f"UPDATE areas SET {', '.join(sets)} WHERE id = ?", params)
     conn.commit()
     return None
 
@@ -1351,14 +1377,16 @@ def set_focus_area(conn, user_id, project_id, area_name):
 def roadmap_all_data(conn, project_id):
     areas = conn.execute(
         """
-        SELECT a.name, a.description_md,
+        SELECT a.name, a.description_md, a.class, a.priority,
                COUNT(CASE WHEN c.status='active' THEN 1 END) AS open,
                COUNT(CASE WHEN c.status='completed' THEN 1 END) AS complete,
                MAX(CASE WHEN c.status='completed' THEN c.completed_at END) AS last_closed
         FROM areas a
         LEFT JOIN contexts c ON c.project_id = a.project_id AND c.area = a.name
         WHERE a.project_id = ?
-        GROUP BY a.id ORDER BY a.name
+        GROUP BY a.id ORDER BY
+          CASE WHEN a.class='product' THEN 0 WHEN a.class='tooling' THEN 1 ELSE 2 END,
+          COALESCE(a.priority, 999999), a.name
         """,
         (project_id,),
     ).fetchall()
