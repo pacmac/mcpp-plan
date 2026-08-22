@@ -1454,7 +1454,8 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
             lines.append("")
             lines.append("**Done:**")
             for a in done:
-                lines.append(f"  - {a['name']} — {a['complete']} complete")
+                date_str = f" (last closed {a['last_closed'][:10]})" if a.get("last_closed") else ""
+                lines.append(f"  - {a['name']} — {a['complete']} complete{date_str}")
         if never_examined:
             lines.append("")
             lines.append("**Never examined:**")
@@ -1470,9 +1471,9 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
             "result": {
                 "ranked": [{"name": a["name"], "open": a["open"],
                             "why": f"{a['open']} open task(s)"} for a in ranked],
-                "done": [{"name": a["name"], "complete": a["complete"]} for a in done],
+                "done": [{"name": a["name"], "complete": a["complete"],
+                          "last_closed": a.get("last_closed")} for a in done],
                 "never_examined": [{"name": a["name"]} for a in never_examined],
-                "parked": [],
                 "unfiled": [{"name": u["name"]} for u in unfiled],
                 "focus": focus,
                 "project_name": project_name,
@@ -1508,7 +1509,8 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
         for a in areas:
             desc = f" — {a['description_md']}" if a.get("description_md") else ""
             if a["open"] == 0 and a["complete"] > 0:
-                marker = " **(done)**"
+                date_str = f", last closed {a['last_closed'][:10]}" if a.get("last_closed") else ""
+                marker = f" **(done{date_str})**"
             elif a["open"] == 0 and a["complete"] == 0:
                 marker = " **(never examined)**"
             else:
