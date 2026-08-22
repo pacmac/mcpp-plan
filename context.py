@@ -1210,28 +1210,39 @@ def create_area(conn, name: str, description_md=None, project_id=None) -> dict:
 
 
 def create_areas_batch(conn, items: list, project_id=None) -> list:
-    """Create multiple areas atomically. Raises ValueError on first conflict."""
+    """Create multiple areas atomically. Raises ValueError on first conflict.
+
+    Uses a savepoint (not BEGIN) so this is safe when called inside an
+    already-open transaction. The DB runs in autocommit mode (isolation_level=None),
+    so conn.commit() would be a no-op — explicit savepoint/release/rollback is required.
+    """
     results = []
     now = db.utc_now_iso()
-    for item in items:
-        name = _validate_area_name(item["name"])
-        desc = item.get("description_md")
-        clash = conn.execute(
-            "SELECT name FROM areas WHERE project_id = ? AND LOWER(name) = LOWER(?)",
-            (project_id, name),
-        ).fetchone()
-        if clash:
-            raise ValueError(
-                f"area '{clash['name']}' already exists (while adding '{name}')"
+    conn.execute("SAVEPOINT batch_area_new")
+    try:
+        for item in items:
+            name = _validate_area_name(item["name"])
+            desc = item.get("description_md")
+            clash = conn.execute(
+                "SELECT name FROM areas WHERE project_id = ? AND LOWER(name) = LOWER(?)",
+                (project_id, name),
+            ).fetchone()
+            if clash:
+                raise ValueError(
+                    f"area '{clash['name']}' already exists (while adding '{name}')"
+                )
+            cur = conn.execute(
+                "INSERT INTO areas (project_id, name, description_md, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (project_id, name, desc, now, now),
             )
-        cur = conn.execute(
-            "INSERT INTO areas (project_id, name, description_md, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (project_id, name, desc, now, now),
-        )
-        results.append({"id": cur.lastrowid, "project_id": project_id,
-                        "name": name, "description_md": desc})
-    conn.commit()
+            results.append({"id": cur.lastrowid, "project_id": project_id,
+                            "name": name, "description_md": desc})
+        conn.execute("RELEASE SAVEPOINT batch_area_new")
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT batch_area_new")
+        conn.execute("RELEASE SAVEPOINT batch_area_new")
+        raise
     return results
 
 

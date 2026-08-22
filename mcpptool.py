@@ -1275,9 +1275,11 @@ def _cmd_step_retitle(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
 def _cmd_area_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     name  = args.get("name")
     items = args.get("items")
-    if items and name:
+    if items is not None and name:
         return {"success": False, "error": "supply either 'name' or 'items', not both"}
-    if not items and not name:
+    if items is not None and len(items) == 0:
+        return {"success": False, "error": "items list is empty"}
+    if items is None and not name:
         return {"success": False, "error": "name is required"}
     pkg_path = _pkg_path()
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
