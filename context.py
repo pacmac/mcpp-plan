@@ -1353,7 +1353,8 @@ def roadmap_all_data(conn, project_id):
         """
         SELECT a.name, a.description_md,
                COUNT(CASE WHEN c.status='active' THEN 1 END) AS open,
-               COUNT(CASE WHEN c.status='complete' THEN 1 END) AS complete
+               COUNT(CASE WHEN c.status='complete' THEN 1 END) AS complete,
+               MAX(CASE WHEN c.status='complete' THEN c.updated_at END) AS last_closed
         FROM areas a
         LEFT JOIN contexts c ON c.project_id = a.project_id AND c.area = a.name
         WHERE a.project_id = ?
