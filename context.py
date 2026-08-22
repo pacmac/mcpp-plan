@@ -1363,8 +1363,11 @@ def roadmap_all_data(conn, project_id):
         (project_id,),
     ).fetchall()
     unfiled = conn.execute(
-        "SELECT name, description_md FROM contexts "
-        "WHERE project_id = ? AND area IS NULL AND status = 'active' ORDER BY name",
+        "SELECT c.name, c.description_md, "
+        "SUM(CASE WHEN t.status != 'complete' AND t.is_deleted = 0 THEN 1 ELSE 0 END) AS open_steps "
+        "FROM contexts c LEFT JOIN tasks t ON t.context_id = c.id "
+        "WHERE c.project_id = ? AND c.area IS NULL AND c.status = 'active' "
+        "GROUP BY c.id ORDER BY c.name",
         (project_id,),
     ).fetchall()
     return {
