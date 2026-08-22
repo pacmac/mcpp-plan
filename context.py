@@ -1179,8 +1179,22 @@ def rename_task(conn, context_name: str, new_title: str, project_id: int | None 
     return {"context_id": context_id, "name": context_name, "title": new_title}
 
 
+def _validate_area_name(name: str) -> str:
+    name = name.strip()
+    if not name:
+        raise ValueError("area name cannot be empty or whitespace-only")
+    return name
+
+
 def create_area(conn, name: str, description_md=None, project_id=None) -> dict:
     import sqlite3 as _sqlite3
+    name = _validate_area_name(name)
+    clash = conn.execute(
+        "SELECT name FROM areas WHERE project_id = ? AND LOWER(name) = LOWER(?)",
+        (project_id, name),
+    ).fetchone()
+    if clash:
+        raise ValueError(f"area '{clash['name']}' already exists in this project")
     now = db.utc_now_iso()
     try:
         cur = conn.execute(
@@ -1215,6 +1229,7 @@ def validate_area(conn, area_name: str, project_id=None):
 
 
 def rename_area(conn, name: str, new_name: str, project_id=None) -> dict:
+    new_name = _validate_area_name(new_name)
     now = db.utc_now_iso()
     row = conn.execute(
         "SELECT id FROM areas WHERE project_id = ? AND name = ?",
@@ -1223,11 +1238,11 @@ def rename_area(conn, name: str, new_name: str, project_id=None) -> dict:
     if not row:
         raise ValueError(f"area '{name}' not found in this project")
     clash = conn.execute(
-        "SELECT 1 FROM areas WHERE project_id = ? AND name = ?",
-        (project_id, new_name),
+        "SELECT name FROM areas WHERE project_id = ? AND LOWER(name) = LOWER(?) AND id != ?",
+        (project_id, new_name, row["id"]),
     ).fetchone()
     if clash:
-        raise ValueError(f"area '{new_name}' already exists in this project")
+        raise ValueError(f"area '{clash['name']}' already exists in this project")
     conn.execute(
         "UPDATE areas SET name = ?, updated_at = ? WHERE id = ?",
         (new_name, now, row["id"]),
