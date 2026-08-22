@@ -20,6 +20,9 @@ tools:
           items:
             type: string
           description: "List of step titles to create"
+        area:
+          type: string
+          description: "Functional area to assign (must exist in plan_area_list)"
       required:
         - name
 
@@ -34,6 +37,9 @@ tools:
         show_all:
           type: boolean
           description: "Show tasks from all users (default: false, only current user's tasks)"
+        area:
+          type: string
+          description: "Filter tasks to this functional area only"
 
   - name: plan_task_complete
     description: "Mark a task as completed (must not be the active task)"
@@ -178,6 +184,39 @@ tools:
           description: "Reset all step statuses to 'planned' (default: true). Set false to preserve original statuses."
       required:
         - name
+
+  # ── Area tools ──
+  - name: plan_area_new
+    description: "Define a functional area for this project"
+    inputSchema:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Area name (e.g. 'radio-transport')"
+        description:
+          type: string
+          description: "What this area does"
+
+  - name: plan_area_list
+    description: "List functional areas defined for this project"
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_task_set_area
+    description: "Set or clear the functional area on a task"
+    inputSchema:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Task slug to update"
+        area:
+          type: string
+          description: "Area name to set (omit to clear)"
 
   # ── Step tools (individual items) ──
   - name: plan_step_switch

@@ -341,6 +341,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
 
                     # Parse kwargs from flattened args
                     title = None
+                    area = None
                     steps_list = []
                     i = 3
                     while i < len(cmd_args):
@@ -350,11 +351,20 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         elif cmd_args[i] == "--step" and i + 1 < len(cmd_args):
                             steps_list.append(plan_ctx.StepInput(title=cmd_args[i + 1]))
                             i += 2
+                        elif cmd_args[i] == "--area" and i + 1 < len(cmd_args):
+                            area = cmd_args[i + 1]
+                            i += 2
                         else:
                             i += 1
 
                     if not steps_list:
                         steps_list = [plan_ctx.StepInput(title="New step")]
+
+                    if area:
+                        err = plan_ctx.validate_area(conn, area, project_id=_project_id)
+                        if err:
+                            conn.close()
+                            return {"success": False, "error": err}
 
                     task_id = plan_ctx.create_task(
                         conn,
@@ -364,6 +374,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         set_active=True,
                         user_id=_user_id,
                         project_id=_project_id,
+                        area=area,
                     )
                     result = plan_ctx.get_task_show(conn, task_id, project_id=_project_id)
                     conn.close()
@@ -373,6 +384,7 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                     conn, _project, _is_new, _user_id, _project_id = _open_db(plan_db_mod, plan_ctx, workspace_dir)
                     status_filter = None
                     show_all_users = False
+                    area_filter = None
                     i = 2
                     while i < len(cmd_args):
                         if cmd_args[i] == "--status" and i + 1 < len(cmd_args):
@@ -381,12 +393,15 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                         elif cmd_args[i] == "--all":
                             show_all_users = True
                             i += 1
+                        elif cmd_args[i] == "--area" and i + 1 < len(cmd_args):
+                            area_filter = cmd_args[i + 1]
+                            i += 2
                         else:
                             i += 1
                     tasks = plan_ctx.list_tasks(
                         conn, status_filter=status_filter,
                         user_id=_user_id, show_all_users=show_all_users,
-                        project_id=_project_id,
+                        project_id=_project_id, area_filter=area_filter,
                     )
                     conn.close()
                     return {"success": True, "result": {"tasks": tasks}}
@@ -779,6 +794,10 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_task_move": _cmd_task_move,
         "plan_task_rename": _cmd_task_rename,
         "plan_step_retitle": _cmd_step_retitle,
+        # Area tools
+        "plan_area_new": _cmd_area_new,
+        "plan_area_list": _cmd_area_list,
+        "plan_task_set_area": _cmd_task_set_area,
         # Report tools
         "plan_project_report": _cmd_project_report,
         "plan_task_report": _cmd_task_report,
@@ -892,6 +911,21 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
                     )
                     result["display"] = (result.get("display", "") + stale_nag)
 
+            # Nag: project has active tasks but no areas defined
+            if _proj_id:
+                has_areas = conn.execute(
+                    "SELECT 1 FROM areas WHERE project_id = ? LIMIT 1", (_proj_id,)
+                ).fetchone()
+                if not has_areas:
+                    has_tasks = conn.execute(
+                        "SELECT 1 FROM contexts WHERE project_id = ? AND status = 'active' LIMIT 1",
+                        (_proj_id,),
+                    ).fetchone()
+                    if has_tasks:
+                        result["display"] = (result.get("display", "") +
+                            "\n\n---\n📋 No areas defined for this project. "
+                            "Use `plan_area_new` to define functional areas and enable area-based tracking.")
+
             conn.close()
         except Exception:
             pass
@@ -939,6 +973,9 @@ def _cmd_task_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         for step in (steps if isinstance(steps, list) else [steps]):
             cmd.extend(["--step", str(step)])
 
+    if area := args.get("area"):
+        cmd.extend(["--area", area])
+
     r = _run_plan_cmd(workspace_dir, cmd)
     return _with_display(r, _fmt_task_show(r.get("result", {})))
 
@@ -950,6 +987,8 @@ def _cmd_task_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         cmd.extend(["--status", "active"])
     if args.get("show_all"):
         cmd.append("--all")
+    if area := args.get("area"):
+        cmd.extend(["--area", area])
     cmd.append("--json")
     r = _run_plan_cmd(workspace_dir, cmd)
     tasks = r.get("result", {}).get("tasks", [])
@@ -1200,6 +1239,68 @@ def _cmd_step_retitle(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
         result = plan_ctx.retitle_step(conn, number, title, user_id=user_id, project_id=project_id)
         return {"success": True, "result": result,
                 "display": f"Step {number} retitled → {title}"}
+    finally:
+        conn.close()
+
+
+# ── Area command handlers ──
+
+def _cmd_area_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    if not name:
+        return {"success": False, "error": "name is required"}
+    description_md = args.get("description")
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.create_area(conn, name, description_md=description_md,
+                                      project_id=project_id)
+        return {"success": True, "result": result,
+                "display": f"Area created: **{name}**"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_area_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        areas = plan_ctx.list_areas(conn, project_id=project_id)
+        lines = [f"**Areas** ({len(areas)})"]
+        for a in areas:
+            desc = f" — {a['description_md']}" if a.get("description_md") else ""
+            lines.append(f"  - {a['name']}{desc}")
+        display = "\n".join(lines) if areas else "No areas defined. Use `plan_area_new` to create one."
+        return {"success": True, "result": {"areas": areas}, "display": display}
+    finally:
+        conn.close()
+
+
+def _cmd_task_set_area(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    area = args.get("area")
+    if not name:
+        return {"success": False, "error": "name is required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        if area:
+            err = plan_ctx.validate_area(conn, area, project_id=project_id)
+            if err:
+                return {"success": False, "error": err}
+        context_id = plan_ctx.resolve_context_id(conn, name, project_id=project_id)
+        now = plan_db_mod.utc_now_iso()
+        conn.execute("UPDATE contexts SET area = ?, updated_at = ? WHERE id = ?",
+                     (area, now, context_id))
+        conn.commit()
+        action = f"→ {area}" if area else "cleared"
+        return {"success": True, "result": {"name": name, "area": area},
+                "display": f"Area {action} on `{name}`"}
     finally:
         conn.close()
 

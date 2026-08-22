@@ -277,6 +277,7 @@ def create_context(
     actor: Optional[str] = None,
     user_id: Optional[int] = None,
     project_id: Optional[int] = None,
+    area: Optional[str] = None,
 ) -> int:
     """Create a new context and optional initial tasks.
 
@@ -288,9 +289,9 @@ def create_context(
     conn.execute("BEGIN")
     try:
         cur = conn.execute(
-            "INSERT INTO contexts (name, status, description_md, user_id, project_id, created_at, updated_at) "
-            "VALUES (?, 'active', ?, ?, ?, ?, ?)",
-            (name, description_md, user_id, project_id, now, now),
+            "INSERT INTO contexts (name, status, description_md, user_id, project_id, area, created_at, updated_at) "
+            "VALUES (?, 'active', ?, ?, ?, ?, ?, ?)",
+            (name, description_md, user_id, project_id, area, now, now),
         )
         context_id = int(cur.lastrowid)
 
@@ -1178,6 +1179,37 @@ def rename_task(conn, context_name: str, new_title: str, project_id: int | None 
     return {"context_id": context_id, "name": context_name, "title": new_title}
 
 
+def create_area(conn, name: str, description_md=None, project_id=None) -> dict:
+    now = db.utc_now_iso()
+    cur = conn.execute(
+        "INSERT INTO areas (project_id, name, description_md, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (project_id, name, description_md, now, now),
+    )
+    conn.commit()
+    return {"id": cur.lastrowid, "project_id": project_id, "name": name,
+            "description_md": description_md}
+
+
+def list_areas(conn, project_id=None) -> list:
+    rows = conn.execute(
+        "SELECT id, project_id, name, description_md, created_at FROM areas "
+        "WHERE project_id = ? ORDER BY name",
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def validate_area(conn, area_name: str, project_id=None):
+    areas = list_areas(conn, project_id=project_id)
+    if not areas:
+        return "this project has no areas defined — use plan_area_new to create one"
+    valid = [a["name"] for a in areas]
+    if area_name not in valid:
+        return f"unknown area '{area_name}'; valid: {', '.join(valid)}"
+    return None
+
+
 def retitle_step(conn, step_number: int, new_title: str,
                  user_id: int | None = None, project_id: int | None = None) -> dict:
     """Retitle a step by sub_index. Preserves status, completed_at, and order."""
@@ -1668,7 +1700,7 @@ def list_contexts(conn, user_id: int | None = None, show_all_users: bool = False
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
 
     rows = conn.execute(
-        "SELECT c.id, c.name, c.status, c.description_md, c.user_id, "
+        "SELECT c.id, c.name, c.status, c.description_md, c.user_id, c.area, "
         "t.sub_index AS task_number, t.title "
         "FROM contexts c "
         "LEFT JOIN context_state s ON s.context_id = c.id "
@@ -1691,6 +1723,7 @@ def list_contexts(conn, user_id: int | None = None, show_all_users: bool = False
             "name": row["name"],
             "status": row["status"],
             "title": row["description_md"] or row["name"],
+            "area": row["area"],
             "is_active": row["id"] == active_id,
             "active_task_number": row["task_number"],
             "active_task_title": row["title"],
@@ -2084,19 +2117,21 @@ switch_task = switch_context
 adopt_task = adopt_context
 
 
-def list_tasks(conn, status_filter=None, user_id=None, show_all_users=False, project_id=None):
-    """List tasks (was list_contexts), with optional status and user filter."""
+def list_tasks(conn, status_filter=None, user_id=None, show_all_users=False, project_id=None, area_filter=None):
+    """List tasks (was list_contexts), with optional status, user, and area filter."""
     contexts = list_contexts(conn, user_id=user_id, show_all_users=show_all_users, project_id=project_id)
     if status_filter:
         contexts = [c for c in contexts if c.get("status", "active") == status_filter]
+    if area_filter:
+        contexts = [c for c in contexts if c.get("area") == area_filter]
     return contexts
 
 
-def create_task(conn, name, description_md=None, steps=None, set_active=False, user_id=None, project_id=None, **kw):
+def create_task(conn, name, description_md=None, steps=None, set_active=False, user_id=None, project_id=None, area=None, **kw):
     """Create a task (was context). Maps steps→tasks for create_context."""
     return create_context(
         conn, name=name, description_md=description_md,
-        tasks=steps, set_active=set_active, user_id=user_id, project_id=project_id, **kw
+        tasks=steps, set_active=set_active, user_id=user_id, project_id=project_id, area=area, **kw
     )
 
 

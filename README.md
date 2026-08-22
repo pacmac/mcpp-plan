@@ -72,8 +72,8 @@ All tools are exposed via MCP with the `plan_` prefix.
 
 | Tool | Description |
 |------|-------------|
-| `plan_task_new` | Create a task with initial steps |
-| `plan_task_list` | List tasks (yours by default, `show_all` for everyone) |
+| `plan_task_new` | Create a task with initial steps; optional `area` to assign a functional area |
+| `plan_task_list` | List tasks (yours by default, `show_all` for everyone); optional `area` to filter |
 | `plan_task_show` | Show a task and its steps |
 | `plan_task_status` | Show active task and progress |
 | `plan_task_switch` | Switch to a different task |
@@ -82,9 +82,17 @@ All tools are exposed via MCP with the `plan_` prefix.
 | `plan_task_rename` | Rename a task's display title (slug unchanged, history preserved) |
 | `plan_step_retitle` | Retitle a step (status/completed_at/order unchanged) |
 | `plan_task_adopt` | Adopt (deep-copy) another user's task into your own list |
+| `plan_task_set_area` | Set or clear the functional area on a task |
 | `plan_task_notes_set` | Set a note on a task (upsert: goal/plan replace by kind, note updates by ID or creates new) |
 | `plan_task_notes_get` | View notes on a task (returns notes with IDs) |
 | `plan_task_notes_delete` | Delete a note from a task by ID |
+
+### Area tools
+
+| Tool | Description |
+|------|-------------|
+| `plan_area_new` | Define a functional area for this project (stored in plan.db) |
+| `plan_area_list` | List functional areas defined for this project |
 
 ### Step tools
 
