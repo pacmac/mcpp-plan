@@ -911,8 +911,11 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
                     )
                     result["display"] = (result.get("display", "") + stale_nag)
 
-            # Nag: project has active tasks but no areas defined
-            if _proj_id:
+            # Nag: project has active tasks but no areas defined anywhere
+            # Suppress if AREAS.yaml exists — that repo uses file-based area definitions
+            # and adding plan.db areas is a Peter-level design decision still pending.
+            _areas_yaml = Path(workspace_dir) / "docs" / "specs" / "AREAS.yaml"
+            if _proj_id and not _areas_yaml.exists():
                 has_areas = conn.execute(
                     "SELECT 1 FROM areas WHERE project_id = ? LIMIT 1", (_proj_id,)
                 ).fetchone()
