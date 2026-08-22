@@ -321,7 +321,7 @@ def create_context(
         if auto_complete_first_task and task_ids:
             first_id = task_ids[0]
             conn.execute(
-                "UPDATE tasks SET status = 'complete', completed_at = ?, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET status = 'completed', completed_at = ?, updated_at = ? WHERE id = ?",
                 (now, now, first_id),
             )
             conn.execute(
@@ -1392,7 +1392,7 @@ def roadmap_all_data(conn, project_id):
     ).fetchall()
     unfiled = conn.execute(
         "SELECT c.name, c.description_md, "
-        "SUM(CASE WHEN t.status != 'complete' AND t.is_deleted = 0 THEN 1 ELSE 0 END) AS open_steps "
+        "SUM(CASE WHEN t.status != 'completed' AND t.is_deleted = 0 THEN 1 ELSE 0 END) AS open_steps "
         "FROM contexts c LEFT JOIN tasks t ON t.context_id = c.id "
         "WHERE c.project_id = ? AND c.area IS NULL AND c.status = 'active' "
         "GROUP BY c.id ORDER BY c.name",
@@ -1844,7 +1844,7 @@ def get_plan_status(conn, context_ref: str | int | None = None, user_id: int | N
         "SELECT "
         "SUM(CASE WHEN status = 'planned' AND is_deleted = 0 THEN 1 ELSE 0 END) AS planned_count, "
         "SUM(CASE WHEN status = 'started' AND is_deleted = 0 THEN 1 ELSE 0 END) AS started_count, "
-        "SUM(CASE WHEN status = 'complete' AND is_deleted = 0 THEN 1 ELSE 0 END) AS completed_count, "
+        "SUM(CASE WHEN status = 'completed' AND is_deleted = 0 THEN 1 ELSE 0 END) AS completed_count, "
         "SUM(CASE WHEN status = 'blocked' AND is_deleted = 0 THEN 1 ELSE 0 END) AS blocked_count, SUM(CASE WHEN is_deleted = 1 THEN 1 ELSE 0 END) AS deleted_count "
         "FROM tasks WHERE context_id = ?",
         (context_id,),
@@ -2473,7 +2473,7 @@ def get_project_report_data(
         # Step counts
         counts = conn.execute(
             "SELECT "
-            "SUM(CASE WHEN status = 'complete' AND is_deleted = 0 THEN 1 ELSE 0 END) AS done, "
+            "SUM(CASE WHEN status = 'completed' AND is_deleted = 0 THEN 1 ELSE 0 END) AS done, "
             "SUM(CASE WHEN is_deleted = 0 THEN 1 ELSE 0 END) AS total "
             "FROM tasks WHERE context_id = ?",
             (ctx_id,),
