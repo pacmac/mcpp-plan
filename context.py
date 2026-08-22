@@ -1248,13 +1248,13 @@ def delete_area(conn, name: str, project_id=None) -> dict:
     if not row:
         raise ValueError(f"area '{name}' not found in this project")
     refs = conn.execute(
-        "SELECT name FROM contexts WHERE project_id = ? AND area = ? AND status = 'active'",
+        "SELECT name FROM contexts WHERE project_id = ? AND area = ?",
         (project_id, name),
     ).fetchall()
     if refs:
         names = ", ".join(f"`{r['name']}`" for r in refs)
         raise ValueError(
-            f"cannot delete area '{name}': {len(refs)} task(s) still assigned: {names}"
+            f"cannot delete area '{name}': {len(refs)} task(s) reference it: {names}"
         )
     conn.execute("DELETE FROM areas WHERE id = ?", (row["id"],))
     conn.commit()
