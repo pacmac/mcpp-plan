@@ -1313,6 +1313,50 @@ def delete_area(conn, name: str, project_id=None) -> dict:
     return {"deleted": name, "project_id": project_id}
 
 
+def get_focus_area(conn, user_id, project_id):
+    row = conn.execute(
+        "SELECT focus_area FROM user_state WHERE user_id = ? AND project_id = ?",
+        (user_id, project_id),
+    ).fetchone()
+    return row["focus_area"] if row else None
+
+
+def set_focus_area(conn, user_id, project_id, area_name):
+    now = db.utc_now_iso()
+    conn.execute(
+        "INSERT INTO user_state (user_id, project_id, focus_area, updated_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id, project_id) DO UPDATE SET focus_area=excluded.focus_area, "
+        "updated_at=excluded.updated_at",
+        (user_id, project_id, area_name, now),
+    )
+
+
+def roadmap_all_data(conn, project_id):
+    areas = conn.execute(
+        """
+        SELECT a.name, a.description_md,
+               COUNT(CASE WHEN c.status='active' THEN 1 END) AS open,
+               COUNT(CASE WHEN c.status='complete' THEN 1 END) AS complete
+        FROM areas a
+        LEFT JOIN contexts c ON c.project_id = a.project_id AND c.area = a.name
+        WHERE a.project_id = ?
+        GROUP BY a.id ORDER BY a.name
+        """,
+        (project_id,),
+    ).fetchall()
+    unfiled = conn.execute(
+        "SELECT name, description_md FROM contexts "
+        "WHERE project_id = ? AND area IS NULL AND status = 'active' ORDER BY name",
+        (project_id,),
+    ).fetchall()
+    return {
+        "areas": [dict(r) for r in areas],
+        "unfiled": [dict(r) for r in unfiled],
+        "project_id": project_id,
+    }
+
+
 def retitle_step(conn, step_number: int, new_title: str,
                  user_id: int | None = None, project_id: int | None = None) -> dict:
     """Retitle a step by sub_index. Preserves status, completed_at, and order."""

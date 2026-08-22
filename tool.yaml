@@ -253,6 +253,28 @@ tools:
           type: string
           description: "Area name to delete"
 
+  # ── Roadmap tools ──
+  - name: plan_roadmap_focus
+    description: "Get or set the focus area for this session. Omit `area` to read the current focus."
+    inputSchema:
+      type: object
+      properties:
+        area:
+          type: string
+          description: "Area name to focus on. Omit to read current focus."
+
+  - name: plan_roadmap_next
+    description: "Show what to work on next, ranked by open task count per area."
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_roadmap_all
+    description: "Show the full roadmap: all areas with open/complete task counts, plus unfiled tasks."
+    inputSchema:
+      type: object
+      properties: {}
+
   # ── Step tools (individual items) ──
   - name: plan_step_switch
     description: "Switch to a specific step within active task"

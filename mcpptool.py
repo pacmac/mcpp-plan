@@ -812,6 +812,10 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_area_rename":   _cmd_area_rename,
         "plan_area_delete":   _cmd_area_delete,
         "plan_task_set_area": _cmd_task_set_area,
+        # Roadmap tools
+        "plan_roadmap_focus": _cmd_roadmap_focus,
+        "plan_roadmap_next":  _cmd_roadmap_next,
+        "plan_roadmap_all":   _cmd_roadmap_all,
         # Report tools
         "plan_project_report": _cmd_project_report,
         "plan_task_report": _cmd_task_report,
@@ -1350,6 +1354,130 @@ def _cmd_area_delete(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                 "display": f"Area deleted: **{name}**"}
     except ValueError as e:
         return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_roadmap_focus(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    area = args.get("area")
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    project_name = project.get("project_name", "") if project else ""
+    try:
+        all_areas = plan_ctx.list_areas(conn, project_id=project_id)
+        area_names = [a["name"] for a in all_areas]
+        if not area_names:
+            return {"success": False, "error": "no areas defined",
+                    "result": {"focus": None, "areas": [], "project_name": project_name}}
+        if area is None:
+            focus = plan_ctx.get_focus_area(conn, user_id, project_id)
+            if focus is None:
+                display = (
+                    "No focus area set. Use `plan_roadmap_focus` with `area=<name>` to set one, "
+                    "or `plan_roadmap_next` to see what to work on.\n"
+                    f"Areas: {', '.join(area_names)}"
+                )
+                return {"success": True,
+                        "result": {"focus": None, "areas": area_names, "project_name": project_name},
+                        "display": display}
+            return {"success": True,
+                    "result": {"focus": focus, "areas": area_names, "project_name": project_name},
+                    "display": f"Focus: **{focus}**  (project: {project_name})"}
+        if area not in area_names:
+            return {"success": False,
+                    "error": f"unknown area '{area}'. Valid: {', '.join(area_names)}",
+                    "result": {"focus": None, "areas": area_names, "project_name": project_name}}
+        plan_ctx.set_focus_area(conn, user_id, project_id, area)
+        return {"success": True,
+                "result": {"focus": area, "areas": area_names, "project_name": project_name},
+                "display": f"Focus set: **{area}**  (project: {project_name})"}
+    finally:
+        conn.close()
+
+
+def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, project, _is_new, user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    project_name = project.get("project_name", "") if project else ""
+    try:
+        data = plan_ctx.roadmap_all_data(conn, project_id)
+        areas = data["areas"]
+        unfiled = data["unfiled"]
+        if not areas:
+            return {"success": False,
+                    "error": "no areas defined — use plan_area_new first",
+                    "result": {"ranked": [], "parked": [], "unfiled": unfiled,
+                               "focus": None, "project_name": project_name}}
+        focus = plan_ctx.get_focus_area(conn, user_id, project_id)
+        ranked = sorted([a for a in areas if a["open"] > 0],
+                        key=lambda a: a["open"], reverse=True)
+        parked = [a for a in areas if a["open"] == 0]
+        lines = [f"**Roadmap next** (project: {project_name})"]
+        if focus:
+            lines.append(f"Focus: **{focus}**")
+        lines.append("")
+        if ranked:
+            lines.append("**Work now:**")
+            for a in ranked:
+                marker = " ← focus" if a["name"] == focus else ""
+                lines.append(f"  - **{a['name']}** — {a['open']} open task(s){marker}")
+        else:
+            lines.append("_No areas have open tasks._")
+        if parked:
+            lines.append("")
+            lines.append("**Nothing open:**")
+            for a in parked:
+                lines.append(f"  - {a['name']} — nothing open")
+        if unfiled:
+            lines.append("")
+            lines.append(
+                f"**IN NO AREA:** {len(unfiled)} active task(s) — assign with `plan_task_set_area`"
+            )
+        return {
+            "success": True,
+            "result": {
+                "ranked": [{"name": a["name"], "open": a["open"],
+                            "why": f"{a['open']} open task(s)"} for a in ranked],
+                "parked": [{"name": a["name"], "open": 0, "why": "nothing open"} for a in parked],
+                "unfiled": [{"name": u["name"]} for u in unfiled],
+                "focus": focus,
+                "project_name": project_name,
+            },
+            "display": "\n".join(lines),
+        }
+    finally:
+        conn.close()
+
+
+def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    project_name = project.get("project_name", "") if project else ""
+    try:
+        data = plan_ctx.roadmap_all_data(conn, project_id)
+        areas = data["areas"]
+        unfiled = data["unfiled"]
+        if not areas:
+            return {"success": False,
+                    "error": "no areas defined — use plan_area_new first",
+                    "result": {"areas": [], "unfiled": unfiled, "project_name": project_name}}
+        lines = [f"**Roadmap** (project: {project_name})", ""]
+        for a in areas:
+            desc = f" — {a['description_md']}" if a.get("description_md") else ""
+            lines.append(f"  - **{a['name']}**{desc}: {a['open']} open, {a['complete']} complete")
+        if unfiled:
+            lines.append("")
+            lines.append(f"**IN NO AREA** ({len(unfiled)} active task(s)):")
+            for u in unfiled:
+                lines.append(f"  - `{u['name']}`")
+        return {
+            "success": True,
+            "result": {"areas": areas, "unfiled": unfiled, "project_name": project_name},
+            "display": "\n".join(lines),
+        }
     finally:
         conn.close()
 

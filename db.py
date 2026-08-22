@@ -23,7 +23,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-LATEST_SCHEMA_VERSION = 14
+LATEST_SCHEMA_VERSION = 15
 
 
 # ── Central DB path ──
@@ -161,9 +161,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
                 tmp_path = Path(tmp_name)
                 _os.close(tmp_fd)
                 try:
-                    shutil.copy2(db_path, tmp_path)
+                    # WAL-safe copy: shutil.copy2 misses the WAL file.
+                    # conn.backup() uses the SQLite online backup API which reads
+                    # through the WAL and produces a fully-checkpointed snapshot.
                     tmp_conn = sqlite3.connect(tmp_path, isolation_level=None)
                     tmp_conn.row_factory = sqlite3.Row
+                    conn.backup(tmp_conn)
                     try:
                         try:
                             _apply_patches_to(tmp_conn, version, LATEST_SCHEMA_VERSION, patches_dir)
