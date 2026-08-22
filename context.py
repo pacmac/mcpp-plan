@@ -1313,6 +1313,22 @@ def delete_area(conn, name: str, project_id=None) -> dict:
     return {"deleted": name, "project_id": project_id}
 
 
+def update_area_description(conn, name: str, description_md: str, project_id=None):
+    row = conn.execute(
+        "SELECT id FROM areas WHERE project_id = ? AND name = ?",
+        (project_id, name),
+    ).fetchone()
+    if not row:
+        return f"area '{name}' not found in this project"
+    now = db.utc_now_iso()
+    conn.execute(
+        "UPDATE areas SET description_md = ?, updated_at = ? WHERE id = ?",
+        (description_md or None, now, row["id"]),
+    )
+    conn.commit()
+    return None
+
+
 def get_focus_area(conn, user_id, project_id):
     row = conn.execute(
         "SELECT focus_area FROM user_state WHERE user_id = ? AND project_id = ?",
