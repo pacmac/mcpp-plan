@@ -243,6 +243,19 @@ tools:
           type: string
           description: "New area name"
 
+  - name: plan_area_describe
+    description: "Set or update the description of an existing area. Pass empty string to clear."
+    inputSchema:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Area name to update"
+        description:
+          type: string
+          description: "New description (markdown). Omit or pass empty string to clear."
+
   - name: plan_area_delete
     description: "Delete an area. Refuses if any active tasks are still assigned to it."
     inputSchema:
