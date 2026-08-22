@@ -811,6 +811,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_area_list":     _cmd_area_list,
         "plan_area_rename":   _cmd_area_rename,
         "plan_area_delete":   _cmd_area_delete,
+        "plan_area_describe": _cmd_area_describe,
         "plan_task_set_area": _cmd_task_set_area,
         # Roadmap tools
         "plan_roadmap_focus": _cmd_roadmap_focus,
@@ -1354,6 +1355,25 @@ def _cmd_area_delete(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                 "display": f"Area deleted: **{name}**"}
     except ValueError as e:
         return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_area_describe(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    description = args.get("description", "")
+    if not name:
+        return {"success": False, "error": "name is required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        err = plan_ctx.update_area_description(conn, name, description, project_id=project_id)
+        if err:
+            return {"success": False, "error": err}
+        action = "cleared" if not description else f"updated"
+        return {"success": True, "result": {"name": name, "description_md": description or None},
+                "display": f"Description {action} for area **{name}**"}
     finally:
         conn.close()
 
