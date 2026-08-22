@@ -398,6 +398,11 @@ def _run_plan_cmd(workspace_dir: str | Path, cmd_args: list[str]) -> dict[str, A
                             i += 2
                         else:
                             i += 1
+                    if area_filter:
+                        err = plan_ctx.validate_area(conn, area_filter, project_id=_project_id)
+                        if err:
+                            conn.close()
+                            return {"success": False, "error": err}
                     tasks = plan_ctx.list_tasks(
                         conn, status_filter=status_filter,
                         user_id=_user_id, show_all_users=show_all_users,
@@ -795,8 +800,10 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_task_rename": _cmd_task_rename,
         "plan_step_retitle": _cmd_step_retitle,
         # Area tools
-        "plan_area_new": _cmd_area_new,
-        "plan_area_list": _cmd_area_list,
+        "plan_area_new":      _cmd_area_new,
+        "plan_area_list":     _cmd_area_list,
+        "plan_area_rename":   _cmd_area_rename,
+        "plan_area_delete":   _cmd_area_delete,
         "plan_task_set_area": _cmd_task_set_area,
         # Report tools
         "plan_project_report": _cmd_project_report,
@@ -1279,6 +1286,43 @@ def _cmd_area_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             lines.append(f"  - {a['name']}{desc}")
         display = "\n".join(lines) if areas else "No areas defined. Use `plan_area_new` to create one."
         return {"success": True, "result": {"areas": areas}, "display": display}
+    finally:
+        conn.close()
+
+
+def _cmd_area_rename(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    new_name = args.get("new_name")
+    if not name:
+        return {"success": False, "error": "name is required"}
+    if not new_name:
+        return {"success": False, "error": "new_name is required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.rename_area(conn, name, new_name, project_id=project_id)
+        return {"success": True, "result": result,
+                "display": f"Area renamed: **{name}** → **{new_name}**"}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_area_delete(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    if not name:
+        return {"success": False, "error": "name is required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.delete_area(conn, name, project_id=project_id)
+        return {"success": True, "result": result,
+                "display": f"Area deleted: **{name}**"}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
     finally:
         conn.close()
 

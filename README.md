@@ -93,6 +93,8 @@ All tools are exposed via MCP with the `plan_` prefix.
 |------|-------------|
 | `plan_area_new` | Define a functional area for this project (stored in plan.db) |
 | `plan_area_list` | List functional areas defined for this project |
+| `plan_area_rename` | Rename an area; cascades to all tasks assigned to it |
+| `plan_area_delete` | Delete an area (refuses if tasks are still assigned) |
 
 ### Step tools
 

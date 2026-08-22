@@ -1180,12 +1180,16 @@ def rename_task(conn, context_name: str, new_title: str, project_id: int | None 
 
 
 def create_area(conn, name: str, description_md=None, project_id=None) -> dict:
+    import sqlite3 as _sqlite3
     now = db.utc_now_iso()
-    cur = conn.execute(
-        "INSERT INTO areas (project_id, name, description_md, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (project_id, name, description_md, now, now),
-    )
+    try:
+        cur = conn.execute(
+            "INSERT INTO areas (project_id, name, description_md, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (project_id, name, description_md, now, now),
+        )
+    except _sqlite3.IntegrityError:
+        raise ValueError(f"area '{name}' already exists in this project")
     conn.commit()
     return {"id": cur.lastrowid, "project_id": project_id, "name": name,
             "description_md": description_md}
@@ -1208,6 +1212,53 @@ def validate_area(conn, area_name: str, project_id=None):
     if area_name not in valid:
         return f"unknown area '{area_name}'; valid: {', '.join(valid)}"
     return None
+
+
+def rename_area(conn, name: str, new_name: str, project_id=None) -> dict:
+    now = db.utc_now_iso()
+    row = conn.execute(
+        "SELECT id FROM areas WHERE project_id = ? AND name = ?",
+        (project_id, name),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"area '{name}' not found in this project")
+    clash = conn.execute(
+        "SELECT 1 FROM areas WHERE project_id = ? AND name = ?",
+        (project_id, new_name),
+    ).fetchone()
+    if clash:
+        raise ValueError(f"area '{new_name}' already exists in this project")
+    conn.execute(
+        "UPDATE areas SET name = ?, updated_at = ? WHERE id = ?",
+        (new_name, now, row["id"]),
+    )
+    conn.execute(
+        "UPDATE contexts SET area = ?, updated_at = ? WHERE project_id = ? AND area = ?",
+        (new_name, now, project_id, name),
+    )
+    conn.commit()
+    return {"old_name": name, "new_name": new_name, "project_id": project_id}
+
+
+def delete_area(conn, name: str, project_id=None) -> dict:
+    row = conn.execute(
+        "SELECT id FROM areas WHERE project_id = ? AND name = ?",
+        (project_id, name),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"area '{name}' not found in this project")
+    refs = conn.execute(
+        "SELECT name FROM contexts WHERE project_id = ? AND area = ? AND status = 'active'",
+        (project_id, name),
+    ).fetchall()
+    if refs:
+        names = ", ".join(f"`{r['name']}`" for r in refs)
+        raise ValueError(
+            f"cannot delete area '{name}': {len(refs)} task(s) still assigned: {names}"
+        )
+    conn.execute("DELETE FROM areas WHERE id = ?", (row["id"],))
+    conn.commit()
+    return {"deleted": name, "project_id": project_id}
 
 
 def retitle_step(conn, step_number: int, new_title: str,

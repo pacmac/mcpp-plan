@@ -218,6 +218,29 @@ tools:
           type: string
           description: "Area name to set (omit to clear)"
 
+  - name: plan_area_rename
+    description: "Rename a functional area; cascades to all tasks assigned to it"
+    inputSchema:
+      type: object
+      required: [name, new_name]
+      properties:
+        name:
+          type: string
+          description: "Current area name"
+        new_name:
+          type: string
+          description: "New area name"
+
+  - name: plan_area_delete
+    description: "Delete an area. Refuses if any active tasks are still assigned to it."
+    inputSchema:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: "Area name to delete"
+
   # ── Step tools (individual items) ──
   - name: plan_step_switch
     description: "Switch to a specific step within active task"
