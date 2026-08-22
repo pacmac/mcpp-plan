@@ -1273,14 +1273,22 @@ def _cmd_step_retitle(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
 # ── Area command handlers ──
 
 def _cmd_area_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
-    name = args.get("name")
-    if not name:
+    name  = args.get("name")
+    items = args.get("items")
+    if items and name:
+        return {"success": False, "error": "supply either 'name' or 'items', not both"}
+    if not items and not name:
         return {"success": False, "error": "name is required"}
-    description_md = args.get("description")
     pkg_path = _pkg_path()
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
     try:
+        if items:
+            created = plan_ctx.create_areas_batch(conn, items, project_id=project_id)
+            names = ", ".join(f"**{a['name']}**" for a in created)
+            return {"success": True, "result": {"created": len(created), "areas": created},
+                    "display": f"Areas created ({len(created)}): {names}"}
+        description_md = args.get("description")
         result = plan_ctx.create_area(conn, name, description_md=description_md,
                                       project_id=project_id)
         return {"success": True, "result": result,

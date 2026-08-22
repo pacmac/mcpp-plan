@@ -187,17 +187,29 @@ tools:
 
   # ── Area tools ──
   - name: plan_area_new
-    description: "Define a functional area for this project"
+    description: "Define one or more functional areas for this project. Single: supply `name` (+ optional `description`). Batch: supply `items` list."
     inputSchema:
       type: object
-      required: [name]
       properties:
         name:
           type: string
-          description: "Area name (e.g. 'radio-transport')"
+          description: "Area name (single-area mode)"
         description:
           type: string
-          description: "What this area does"
+          description: "What this area does (single-area mode)"
+        items:
+          type: array
+          description: "Batch mode: list of areas to create atomically. Mutually exclusive with `name`."
+          items:
+            type: object
+            required: [name]
+            properties:
+              name:
+                type: string
+                description: "Area name"
+              description_md:
+                type: string
+                description: "What this area does"
 
   - name: plan_area_list
     description: "List functional areas defined for this project"

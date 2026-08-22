@@ -1209,6 +1209,32 @@ def create_area(conn, name: str, description_md=None, project_id=None) -> dict:
             "description_md": description_md}
 
 
+def create_areas_batch(conn, items: list, project_id=None) -> list:
+    """Create multiple areas atomically. Raises ValueError on first conflict."""
+    results = []
+    now = db.utc_now_iso()
+    for item in items:
+        name = _validate_area_name(item["name"])
+        desc = item.get("description_md")
+        clash = conn.execute(
+            "SELECT name FROM areas WHERE project_id = ? AND LOWER(name) = LOWER(?)",
+            (project_id, name),
+        ).fetchone()
+        if clash:
+            raise ValueError(
+                f"area '{clash['name']}' already exists (while adding '{name}')"
+            )
+        cur = conn.execute(
+            "INSERT INTO areas (project_id, name, description_md, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (project_id, name, desc, now, now),
+        )
+        results.append({"id": cur.lastrowid, "project_id": project_id,
+                        "name": name, "description_md": desc})
+    conn.commit()
+    return results
+
+
 def list_areas(conn, project_id=None) -> list:
     rows = conn.execute(
         "SELECT id, project_id, name, description_md, created_at FROM areas "
