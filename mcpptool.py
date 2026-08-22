@@ -1462,9 +1462,11 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
             for a in never_examined:
                 lines.append(f"  - {a['name']}")
         if unfiled:
+            total_open_steps = sum(u.get("open_steps") or 0 for u in unfiled)
+            step_note = f" ({total_open_steps} open steps total)" if total_open_steps > 0 else ""
             lines.append("")
             lines.append(
-                f"**IN NO AREA:** {len(unfiled)} active task(s) — assign with `plan_task_set_area`"
+                f"**IN NO AREA:** {len(unfiled)} active task(s){step_note} — assign with `plan_task_set_area`"
             )
         return {
             "success": True,
@@ -1507,7 +1509,8 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                     ] + unfiled_lines)}
         lines = [f"**Roadmap** (project: {project_name})", ""]
         for a in areas:
-            desc = f" — {a['description_md']}" if a.get("description_md") else ""
+            desc_line = (a.get("description_md") or "").split("\n")[0].strip()
+            desc = f" — {desc_line}" if desc_line else ""
             if a["open"] == 0 and a["complete"] > 0:
                 date_str = f", last closed {a['last_closed'][:10]}" if a.get("last_closed") else ""
                 marker = f" **(done{date_str})**"
@@ -1517,10 +1520,13 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                 marker = ""
             lines.append(f"  - **{a['name']}**{desc}: {a['open']} open, {a['complete']} complete{marker}")
         if unfiled:
+            total_open_steps = sum(u.get("open_steps") or 0 for u in unfiled)
+            step_note = f" — {total_open_steps} open steps across these tasks" if total_open_steps > 0 else ""
             lines.append("")
-            lines.append(f"**IN NO AREA** ({len(unfiled)} active task(s)):")
+            lines.append(f"**IN NO AREA** ({len(unfiled)} active task(s){step_note}):")
             for u in unfiled:
-                lines.append(f"  - `{u['name']}`")
+                step_str = f" ({u['open_steps']} open steps)" if u.get("open_steps") else ""
+                lines.append(f"  - `{u['name']}`{step_str}")
         return {
             "success": True,
             "result": {"areas": areas, "unfiled": unfiled, "project_name": project_name},
