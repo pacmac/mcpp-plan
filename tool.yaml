@@ -187,7 +187,7 @@ tools:
 
   # ── Area tools ──
   - name: plan_area_new
-    description: "Define one or more functional areas for this project. Single: supply `name` (+ optional `description`, `class`, `priority`). Batch: supply `items` list."
+    description: "Define one or more functional areas for this project. Single: supply `name` (+ optional `description`, `class`, `priority`, `scope`, `watch`, `depends`). Batch: supply `items` list."
     inputSchema:
       type: object
       properties:
@@ -204,6 +204,21 @@ tools:
         priority:
           type: integer
           description: "Ordering within class (lower = higher priority; omit to sort last)"
+        scope:
+          type: array
+          items:
+            type: string
+          description: "File glob patterns owned by this area (e.g. ['src/radio/**', 'tests/test_radio.py']). Enables file-ownership check."
+        watch:
+          type: array
+          items:
+            type: string
+          description: "File paths whose change invalidates this area's sign-off (e.g. ['rak/v3/src/main.cpp'])"
+        depends:
+          type: array
+          items:
+            type: string
+          description: "Area names this area depends on. Gates ordering: a gated area is NOT startable. Names must be existing areas."
         items:
           type: array
           description: "Batch mode: list of areas to create atomically. Mutually exclusive with `name`."
@@ -224,6 +239,21 @@ tools:
               priority:
                 type: integer
                 description: "Ordering within class"
+              scope:
+                type: array
+                items:
+                  type: string
+                description: "File glob patterns owned by this area"
+              watch:
+                type: array
+                items:
+                  type: string
+                description: "Files whose change invalidates sign-off"
+              depends:
+                type: array
+                items:
+                  type: string
+                description: "Area names this area depends on"
 
   - name: plan_area_list
     description: "List functional areas defined for this project"
@@ -258,7 +288,7 @@ tools:
           description: "New area name"
 
   - name: plan_area_describe
-    description: "Set or update metadata on an existing area: description, class (product|tooling), and/or priority. Supply at least one."
+    description: "Set or update metadata on an existing area: description, class, priority, scope, watch, and/or depends. Supply at least one. Omitting a field leaves it unchanged."
     inputSchema:
       type: object
       required: [name]
@@ -268,7 +298,7 @@ tools:
           description: "Area name to update"
         description:
           type: string
-          description: "New description (markdown). Omit or pass empty string to clear."
+          description: "New description (markdown). Omit to leave unchanged; pass null or empty string to clear."
         class:
           type: string
           enum: ["product", "tooling"]
@@ -276,6 +306,21 @@ tools:
         priority:
           type: integer
           description: "Ordering within class (lower = higher priority)"
+        scope:
+          type: array
+          items:
+            type: string
+          description: "File glob patterns owned by this area. Pass empty array [] to clear."
+        watch:
+          type: array
+          items:
+            type: string
+          description: "Files whose change invalidates this area's sign-off. Pass empty array [] to clear."
+        depends:
+          type: array
+          items:
+            type: string
+          description: "Area names this area depends on. Names must be existing areas. Pass empty array [] to clear."
 
   - name: plan_area_delete
     description: "Delete an area. Refuses if any active tasks are still assigned to it."

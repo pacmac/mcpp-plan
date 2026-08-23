@@ -1298,9 +1298,13 @@ def _cmd_area_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         description_md = args.get("description")
         area_class = args.get("class") or None
         priority = args.get("priority")
+        scope = args.get("scope") or None
+        watch = args.get("watch") or None
+        depends = args.get("depends") or None
         result = plan_ctx.create_area(conn, name, description_md=description_md,
                                       project_id=project_id, area_class=area_class,
-                                      priority=priority)
+                                      priority=priority, scope=scope, watch=watch,
+                                      depends=depends)
         class_note = f" ({area_class})" if area_class else ""
         return {"success": True, "result": result,
                 "display": f"Area created: **{name}**{class_note}"}
@@ -1322,7 +1326,14 @@ def _cmd_area_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             desc = f" — {desc_line}" if desc_line else ""
             cls = a.get("class") or "unclassed"
             pri = f", priority {a['priority']}" if a.get("priority") is not None else ""
-            lines.append(f"  - {a['name']} ({cls}{pri}){desc}")
+            extra = ""
+            if a.get("scope"):
+                extra += f"\n      scope: {', '.join(a['scope'])}"
+            if a.get("watch"):
+                extra += f"\n      watch: {', '.join(a['watch'])}"
+            if a.get("depends"):
+                extra += f"\n      depends: {', '.join(a['depends'])}"
+            lines.append(f"  - {a['name']} ({cls}{pri}){desc}{extra}")
         display = "\n".join(lines) if areas else "No areas defined. Use `plan_area_new` to create one."
         return {"success": True, "result": {"areas": areas}, "display": display}
     finally:
@@ -1373,19 +1384,30 @@ def _cmd_area_describe(workspace_dir: str, args: dict[str, Any]) -> dict[str, An
     description = args.get("description")
     area_class = args.get("class") or None
     priority = args.get("priority")
+    scope = args.get("scope") or None
+    watch = args.get("watch") or None
+    depends = args.get("depends") or None
     _update_class = "class" in args
     _update_priority = "priority" in args
     _update_desc = "description" in args
-    if not any([_update_desc, _update_class, _update_priority]):
-        return {"success": False, "error": "supply at least one of: description, class, priority"}
+    _update_scope = "scope" in args
+    _update_watch = "watch" in args
+    _update_depends = "depends" in args
+    if not any([_update_desc, _update_class, _update_priority,
+                _update_scope, _update_watch, _update_depends]):
+        return {"success": False,
+                "error": "supply at least one of: description, class, priority, scope, watch, depends"}
     pkg_path = _pkg_path()
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
     try:
         err = plan_ctx.update_area_description(
-            conn, name, description or "", project_id=project_id,
+            conn, name, description, project_id=project_id,
             area_class=area_class, priority=priority,
+            scope=scope, watch=watch, depends=depends,
             _update_class=_update_class, _update_priority=_update_priority,
+            _update_desc=_update_desc, _update_scope=_update_scope,
+            _update_watch=_update_watch, _update_depends=_update_depends,
         )
         if err:
             return {"success": False, "error": err}
@@ -1396,6 +1418,12 @@ def _cmd_area_describe(workspace_dir: str, args: dict[str, Any]) -> dict[str, An
             parts.append(f"class={area_class or 'cleared'}")
         if _update_priority:
             parts.append(f"priority={priority}")
+        if _update_scope:
+            parts.append(f"scope={scope or 'cleared'}")
+        if _update_watch:
+            parts.append(f"watch={watch or 'cleared'}")
+        if _update_depends:
+            parts.append(f"depends={depends or 'cleared'}")
         return {"success": True, "result": {"name": name},
                 "display": f"Updated **{name}**: {', '.join(parts)}"}
     except ValueError as e:
@@ -1461,7 +1489,11 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
                                "focus": None, "project_name": project_name},
                     "display": f"**Roadmap next** (project: {project_name})\n\nNo areas defined. Use `plan_area_new` to create areas.{unfiled_note}"}
         focus = plan_ctx.get_focus_area(conn, user_id, project_id)
-        ranked = sorted([a for a in areas if a["open"] > 0],
+        all_with_open = [a for a in areas if a["open"] > 0]
+        # Separate gated (open depends) from ungated
+        gated = sorted([a for a in all_with_open if a.get("open_depends")],
+                       key=lambda a: a["open"], reverse=True)
+        ranked = sorted([a for a in all_with_open if not a.get("open_depends")],
                         key=lambda a: a["open"], reverse=True)
         done = [a for a in areas if a["open"] == 0 and a["complete"] > 0]
         never_examined = [a for a in areas if a["open"] == 0 and a["complete"] == 0]
@@ -1494,6 +1526,13 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
                 lines.extend(_ranked_rows(unclassed_ranked))
         else:
             lines.append("_No areas have open tasks._")
+        if gated:
+            lines.append("")
+            lines.append("**Gated** (blocked by unfinished dependency):")
+            for a in gated:
+                gate_names = ", ".join(a["open_depends"])
+                marker = " ← focus" if a["name"] == focus else ""
+                lines.append(f"  - **{a['name']}** — {a['open']} open task(s), gated by: {gate_names}{marker}")
         if done:
             lines.append("")
             lines.append("**Done:**")
@@ -1517,6 +1556,8 @@ def _cmd_roadmap_next(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
             "result": {
                 "ranked": [{"name": a["name"], "open": a["open"],
                             "why": f"{a['open']} open task(s)"} for a in ranked],
+                "gated": [{"name": a["name"], "open": a["open"],
+                           "open_depends": a["open_depends"]} for a in gated],
                 "done": [{"name": a["name"], "complete": a["complete"],
                           "last_closed": a.get("last_closed")} for a in done],
                 "never_examined": [{"name": a["name"]} for a in never_examined],
@@ -1561,7 +1602,16 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                 marker = " **(never examined)**"
             else:
                 marker = ""
-            return f"  - **{a['name']}**{desc}: {a['open']} open, {a['complete']} complete{marker}"
+            extra = ""
+            if a.get("depends"):
+                open_dep = a.get("open_depends") or []
+                dep_str = ", ".join(
+                    f"{d} ({'open' if d in open_dep else 'done'})" for d in a["depends"]
+                )
+                extra += f"\n      depends: {dep_str}"
+            if a.get("watch"):
+                extra += f"\n      watch: {', '.join(a['watch'])}"
+            return f"  - **{a['name']}**{desc}: {a['open']} open, {a['complete']} complete{marker}{extra}"
 
         product = [a for a in areas if a.get("class") == "product"]
         tooling = [a for a in areas if a.get("class") == "tooling"]

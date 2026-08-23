@@ -1191,11 +1191,38 @@ def _validate_area_class(area_class):
         raise ValueError(f"class must be 'product' or 'tooling', got '{area_class}'")
 
 
+def _validate_depends(conn, depends: list, project_id, exclude_name=None):
+    """Raise ValueError if any depends name is not an existing area in this project."""
+    existing = {r["name"] for r in conn.execute(
+        "SELECT name FROM areas WHERE project_id = ?", (project_id,)
+    ).fetchall()}
+    if exclude_name:
+        existing.discard(exclude_name)
+    unknown = [d for d in depends if d not in existing]
+    if unknown:
+        raise ValueError(f"unknown area(s) in depends: {', '.join(unknown)}")
+
+
+def _json_enc(lst):
+    """Encode a list to JSON string, or None if lst is None."""
+    import json
+    return json.dumps(lst) if lst is not None else None
+
+
+def _json_dec(text):
+    """Decode a JSON string to a list, or None if text is falsy."""
+    import json
+    return json.loads(text) if text else None
+
+
 def create_area(conn, name: str, description_md=None, project_id=None,
-                area_class=None, priority=None) -> dict:
+                area_class=None, priority=None, scope=None, watch=None,
+                depends=None) -> dict:
     import sqlite3 as _sqlite3
     name = _validate_area_name(name)
     _validate_area_class(area_class)
+    if depends:
+        _validate_depends(conn, depends, project_id)
     clash = conn.execute(
         "SELECT name FROM areas WHERE project_id = ? AND LOWER(name) = LOWER(?)",
         (project_id, name),
@@ -1205,15 +1232,18 @@ def create_area(conn, name: str, description_md=None, project_id=None,
     now = db.utc_now_iso()
     try:
         cur = conn.execute(
-            "INSERT INTO areas (project_id, name, description_md, class, priority, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (project_id, name, description_md, area_class, priority, now, now),
+            "INSERT INTO areas (project_id, name, description_md, class, priority, "
+            "scope, watch, depends, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (project_id, name, description_md, area_class, priority,
+             _json_enc(scope), _json_enc(watch), _json_enc(depends), now, now),
         )
     except _sqlite3.IntegrityError:
         raise ValueError(f"area '{name}' already exists in this project")
     conn.commit()
     return {"id": cur.lastrowid, "project_id": project_id, "name": name,
-            "description_md": description_md, "class": area_class, "priority": priority}
+            "description_md": description_md, "class": area_class, "priority": priority,
+            "scope": scope, "watch": watch, "depends": depends}
 
 
 def create_areas_batch(conn, items: list, project_id=None) -> list:
@@ -1232,6 +1262,9 @@ def create_areas_batch(conn, items: list, project_id=None) -> list:
             desc = item.get("description_md")
             area_class = item.get("class")
             priority = item.get("priority")
+            scope = item.get("scope")
+            watch = item.get("watch")
+            depends = item.get("depends")
             _validate_area_class(area_class)
             clash = conn.execute(
                 "SELECT name FROM areas WHERE project_id = ? AND LOWER(name) = LOWER(?)",
@@ -1242,13 +1275,29 @@ def create_areas_batch(conn, items: list, project_id=None) -> list:
                     f"area '{clash['name']}' already exists (while adding '{name}')"
                 )
             cur = conn.execute(
-                "INSERT INTO areas (project_id, name, description_md, class, priority, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (project_id, name, desc, area_class, priority, now, now),
+                "INSERT INTO areas (project_id, name, description_md, class, priority, "
+                "scope, watch, depends, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project_id, name, desc, area_class, priority,
+                 _json_enc(scope), _json_enc(watch), _json_enc(depends), now, now),
             )
             results.append({"id": cur.lastrowid, "project_id": project_id,
                             "name": name, "description_md": desc,
-                            "class": area_class, "priority": priority})
+                            "class": area_class, "priority": priority,
+                            "scope": scope, "watch": watch, "depends": depends})
+        # Validate depends after all items exist under the savepoint.
+        all_names = {r["name"] for r in conn.execute(
+            "SELECT name FROM areas WHERE project_id = ?", (project_id,)
+        ).fetchall()}
+        for item_result in results:
+            dep = item_result.get("depends")
+            if dep:
+                unknown = [d for d in dep if d not in all_names]
+                if unknown:
+                    raise ValueError(
+                        f"unknown area(s) in depends for '{item_result['name']}': "
+                        f"{', '.join(unknown)}"
+                    )
         conn.execute("RELEASE SAVEPOINT batch_area_new")
     except Exception:
         conn.execute("ROLLBACK TO SAVEPOINT batch_area_new")
@@ -1265,11 +1314,19 @@ _AREA_ORDER = (
 
 def list_areas(conn, project_id=None) -> list:
     rows = conn.execute(
-        f"SELECT id, project_id, name, description_md, class, priority, created_at FROM areas "
+        f"SELECT id, project_id, name, description_md, class, priority, "
+        f"scope, watch, depends, created_at FROM areas "
         f"WHERE project_id = ? ORDER BY {_AREA_ORDER}",
         (project_id,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["scope"] = _json_dec(d.get("scope"))
+        d["watch"] = _json_dec(d.get("watch"))
+        d["depends"] = _json_dec(d.get("depends"))
+        result.append(d)
+    return result
 
 
 def validate_area(conn, area_name: str, project_id=None):
@@ -1330,9 +1387,12 @@ def delete_area(conn, name: str, project_id=None) -> dict:
     return {"deleted": name, "project_id": project_id}
 
 
-def update_area_description(conn, name: str, description_md: str, project_id=None,
-                            area_class=None, priority=None, _update_class=False,
-                            _update_priority=False):
+def update_area_description(conn, name: str, description_md=None, project_id=None,
+                            area_class=None, priority=None,
+                            scope=None, watch=None, depends=None,
+                            _update_class=False, _update_priority=False,
+                            _update_desc=False, _update_scope=False,
+                            _update_watch=False, _update_depends=False):
     _validate_area_class(area_class)
     row = conn.execute(
         "SELECT id FROM areas WHERE project_id = ? AND name = ?",
@@ -1340,15 +1400,29 @@ def update_area_description(conn, name: str, description_md: str, project_id=Non
     ).fetchone()
     if not row:
         return f"area '{name}' not found in this project"
+    if _update_depends and depends:
+        _validate_depends(conn, depends, project_id, exclude_name=name)
     now = db.utc_now_iso()
-    sets = ["description_md = ?", "updated_at = ?"]
-    params = [description_md or None, now]
+    sets = ["updated_at = ?"]
+    params = [now]
+    if _update_desc:
+        sets.insert(0, "description_md = ?")
+        params.insert(0, description_md or None)
     if _update_class:
         sets.append("class = ?")
         params.append(area_class)
     if _update_priority:
         sets.append("priority = ?")
         params.append(priority)
+    if _update_scope:
+        sets.append("scope = ?")
+        params.append(_json_enc(scope))
+    if _update_watch:
+        sets.append("watch = ?")
+        params.append(_json_enc(watch))
+    if _update_depends:
+        sets.append("depends = ?")
+        params.append(_json_enc(depends))
     params.append(row["id"])
     conn.execute(f"UPDATE areas SET {', '.join(sets)} WHERE id = ?", params)
     conn.commit()
@@ -1378,6 +1452,7 @@ def roadmap_all_data(conn, project_id):
     areas = conn.execute(
         """
         SELECT a.name, a.description_md, a.class, a.priority,
+               a.scope, a.watch, a.depends,
                COUNT(CASE WHEN c.status='active' THEN 1 END) AS open,
                COUNT(CASE WHEN c.status='completed' THEN 1 END) AS complete,
                MAX(CASE WHEN c.status='completed' THEN c.completed_at END) AS last_closed
@@ -1390,6 +1465,20 @@ def roadmap_all_data(conn, project_id):
         """,
         (project_id,),
     ).fetchall()
+    area_list = []
+    open_by_name = {}
+    for r in areas:
+        d = dict(r)
+        d["scope"] = _json_dec(d.get("scope"))
+        d["watch"] = _json_dec(d.get("watch"))
+        d["depends"] = _json_dec(d.get("depends"))
+        open_by_name[d["name"]] = d["open"]
+        area_list.append(d)
+    for a in area_list:
+        if a["depends"]:
+            a["open_depends"] = [dep for dep in a["depends"] if open_by_name.get(dep, 0) > 0]
+        else:
+            a["open_depends"] = []
     unfiled = conn.execute(
         "SELECT c.name, c.description_md, "
         "SUM(CASE WHEN t.status != 'completed' AND t.is_deleted = 0 THEN 1 ELSE 0 END) AS open_steps "
@@ -1399,7 +1488,7 @@ def roadmap_all_data(conn, project_id):
         (project_id,),
     ).fetchall()
     return {
-        "areas": [dict(r) for r in areas],
+        "areas": area_list,
         "unfiled": [dict(r) for r in unfiled],
         "project_id": project_id,
     }
