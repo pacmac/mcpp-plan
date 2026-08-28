@@ -1494,6 +1494,347 @@ def roadmap_all_data(conn, project_id):
     }
 
 
+# ── Releases and Release Candidates ──────────────────────────────────────────
+
+_VALID_RELEASE_STATES = {"planning", "active", "released", "abandoned"}
+_VALID_RC_STATES = {"planning", "active", "released", "abandoned"}
+
+
+def _get_release_row(conn, release_name: str, project_id: int):
+    row = conn.execute(
+        "SELECT * FROM releases WHERE name = ? AND project_id = ?",
+        (release_name, project_id),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"release not found: {release_name!r}")
+    return row
+
+
+def _get_rc_row(conn, release_id: int, rc_number: int):
+    row = conn.execute(
+        "SELECT * FROM release_candidates WHERE release_id = ? AND rc_number = ?",
+        (release_id, rc_number),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"RC{rc_number} not found for this release")
+    return row
+
+
+def create_release(conn, name: str, project_id: int, description_md=None,
+                   start_date=None, target_date=None) -> dict:
+    from db import utc_now_iso
+    name = name.strip()
+    if not name:
+        raise ValueError("release name cannot be empty")
+    existing = conn.execute(
+        "SELECT id FROM releases WHERE name = ? AND project_id = ?",
+        (name, project_id),
+    ).fetchone()
+    if existing:
+        raise ValueError(f"release already exists: {name!r}")
+    now = utc_now_iso()
+    cur = conn.execute(
+        "INSERT INTO releases (project_id, name, description_md, state, "
+        "start_date, target_date, notes_md, created_at, updated_at) "
+        "VALUES (?, ?, ?, 'planning', ?, ?, NULL, ?, ?)",
+        (project_id, name, description_md, start_date, target_date, now, now),
+    )
+    return dict(conn.execute(
+        "SELECT * FROM releases WHERE id = ?", (cur.lastrowid,)
+    ).fetchone())
+
+
+def list_releases(conn, project_id: int) -> list:
+    rows = conn.execute(
+        "SELECT r.*, "
+        "(SELECT COUNT(*) FROM release_candidates rc WHERE rc.release_id = r.id) AS rc_count "
+        "FROM releases r WHERE r.project_id = ? ORDER BY r.created_at",
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_release(conn, release_name: str, project_id: int) -> dict:
+    rel = dict(_get_release_row(conn, release_name, project_id))
+    rcs = conn.execute(
+        "SELECT * FROM release_candidates WHERE release_id = ? ORDER BY rc_number",
+        (rel["id"],),
+    ).fetchall()
+    rel["candidates"] = [dict(rc) for rc in rcs]
+    scope = conn.execute(
+        "SELECT a.name, ra.rc_id FROM release_areas ra "
+        "JOIN areas a ON a.id = ra.area_id "
+        "WHERE ra.release_id = ? ORDER BY ra.rc_id NULLS FIRST, a.name",
+        (rel["id"],),
+    ).fetchall()
+    rel["scope"] = [dict(s) for s in scope]
+    return rel
+
+
+def set_release_state(conn, release_name: str, state: str, project_id: int) -> dict:
+    if state not in _VALID_RELEASE_STATES:
+        raise ValueError(f"invalid state: {state!r}; must be one of {sorted(_VALID_RELEASE_STATES)}")
+    from db import utc_now_iso
+    rel = _get_release_row(conn, release_name, project_id)
+    now = utc_now_iso()
+    released_at = now if state == "released" else rel["released_at"]
+    conn.execute(
+        "UPDATE releases SET state = ?, released_at = ?, updated_at = ? WHERE id = ?",
+        (state, released_at, now, rel["id"]),
+    )
+    return dict(conn.execute("SELECT * FROM releases WHERE id = ?", (rel["id"],)).fetchone())
+
+
+def set_release_notes(conn, release_name: str, notes_md: str, project_id: int,
+                      append: bool = False) -> dict:
+    from db import utc_now_iso
+    rel = _get_release_row(conn, release_name, project_id)
+    if append and rel["notes_md"]:
+        notes_md = rel["notes_md"].rstrip() + "\n\n" + notes_md
+    conn.execute(
+        "UPDATE releases SET notes_md = ?, updated_at = ? WHERE id = ?",
+        (notes_md, utc_now_iso(), rel["id"]),
+    )
+    return dict(conn.execute("SELECT * FROM releases WHERE id = ?", (rel["id"],)).fetchone())
+
+
+def create_rc(conn, release_name: str, project_id: int, rc_number: int | None = None,
+              start_date=None, target_date=None, notes_md=None) -> dict:
+    from db import utc_now_iso
+    rel = _get_release_row(conn, release_name, project_id)
+    if rc_number is None:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(rc_number), 0) + 1 AS next FROM release_candidates WHERE release_id = ?",
+            (rel["id"],),
+        ).fetchone()
+        rc_number = row["next"]
+    existing = conn.execute(
+        "SELECT id FROM release_candidates WHERE release_id = ? AND rc_number = ?",
+        (rel["id"], rc_number),
+    ).fetchone()
+    if existing:
+        raise ValueError(f"RC{rc_number} already exists for release {release_name!r}")
+    now = utc_now_iso()
+    cur = conn.execute(
+        "INSERT INTO release_candidates (release_id, rc_number, state, "
+        "start_date, target_date, notes_md, created_at, updated_at) "
+        "VALUES (?, ?, 'planning', ?, ?, ?, ?, ?)",
+        (rel["id"], rc_number, start_date, target_date, notes_md, now, now),
+    )
+    return dict(conn.execute(
+        "SELECT * FROM release_candidates WHERE id = ?", (cur.lastrowid,)
+    ).fetchone())
+
+
+def start_rc(conn, release_name: str, rc_number: int, project_id: int) -> dict:
+    """Set RC active. Gate: all earlier RCs for this release must be released."""
+    from db import utc_now_iso
+    rel = _get_release_row(conn, release_name, project_id)
+    rc = _get_rc_row(conn, rel["id"], rc_number)
+    if rc["state"] == "active":
+        return dict(rc)
+    # Check all RCs with a lower rc_number are released (or abandoned).
+    blocking = conn.execute(
+        "SELECT rc_number, state FROM release_candidates "
+        "WHERE release_id = ? AND rc_number < ? AND state NOT IN ('released', 'abandoned') "
+        "ORDER BY rc_number",
+        (rel["id"], rc_number),
+    ).fetchall()
+    if blocking:
+        names = ", ".join(f"RC{r['rc_number']} ({r['state']})" for r in blocking)
+        raise ValueError(f"cannot start RC{rc_number}: earlier RC(s) not yet released: {names}")
+    now = utc_now_iso()
+    conn.execute(
+        "UPDATE release_candidates SET state = 'active', updated_at = ? WHERE id = ?",
+        (now, rc["id"]),
+    )
+    return dict(conn.execute(
+        "SELECT * FROM release_candidates WHERE id = ?", (rc["id"],)
+    ).fetchone())
+
+
+def _effective_rc_scope(conn, release_id: int, rc_id: int) -> list[str]:
+    """Return list of area names in scope for an RC (release-level + RC-level)."""
+    rows = conn.execute(
+        "SELECT DISTINCT a.name FROM release_areas ra "
+        "JOIN areas a ON a.id = ra.area_id "
+        "WHERE ra.release_id = ? AND (ra.rc_id IS NULL OR ra.rc_id = ?) "
+        "ORDER BY a.name",
+        (release_id, rc_id),
+    ).fetchall()
+    return [r["name"] for r in rows]
+
+
+def check_rc_exit_criteria(conn, release_name: str, rc_number: int,
+                           project_id: int) -> dict:
+    """Check exit criteria for releasing an RC.
+
+    Returns dict with keys:
+      blockers: list of str (non-empty = cannot release)
+      warnings: list of str (informational)
+      scope:    list of area names checked
+    """
+    rel = _get_release_row(conn, release_name, project_id)
+    rc = _get_rc_row(conn, rel["id"], rc_number)
+    scope = _effective_rc_scope(conn, rel["id"], rc["id"])
+
+    blockers = []
+    warnings = []
+
+    if not scope:
+        warnings.append("no areas scoped to this RC — gate trivially passes")
+
+    # 1. Open tasks per scoped area.
+    for area_name in scope:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM contexts "
+            "WHERE project_id = ? AND area = ? AND status != 'completed'",
+            (project_id, area_name),
+        ).fetchone()
+        if row["n"] > 0:
+            blockers.append(f"area {area_name!r}: {row['n']} open task(s)")
+
+    # 2. Open depends: for each scoped area, check depends pointing to area with open tasks.
+    area_open = {}
+    if scope:
+        for area_name in scope:
+            r = conn.execute(
+                "SELECT COALESCE(SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END), 0) AS n "
+                "FROM contexts WHERE project_id = ? AND area = ?",
+                (project_id, area_name),
+            ).fetchone()
+            area_open[area_name] = r["n"]
+        for area_name in scope:
+            row = conn.execute(
+                "SELECT depends FROM areas WHERE name = ? AND project_id = ?",
+                (area_name, project_id),
+            ).fetchone()
+            if row and row["depends"]:
+                deps = _json_dec(row["depends"]) or []
+                open_deps = [d for d in deps if area_open.get(d, 0) > 0]
+                if open_deps:
+                    blockers.append(
+                        f"area {area_name!r}: open depends on {', '.join(open_deps)}"
+                    )
+
+    # 3. Warning: unfiled open tasks in this project.
+    unfiled = conn.execute(
+        "SELECT COUNT(*) AS n FROM contexts "
+        "WHERE project_id = ? AND area IS NULL AND status != 'completed'",
+        (project_id,),
+    ).fetchone()
+    if unfiled["n"] > 0:
+        warnings.append(
+            f"{unfiled['n']} open task(s) unfiled (no area) — not counted by this gate"
+        )
+
+    return {"blockers": blockers, "warnings": warnings, "scope": scope}
+
+
+def release_rc(conn, release_name: str, rc_number: int, project_id: int,
+               notes_md: str | None = None) -> dict:
+    """Attempt to release an RC. Returns result dict with ok, blockers, warnings."""
+    from db import utc_now_iso
+    rel = _get_release_row(conn, release_name, project_id)
+    rc = _get_rc_row(conn, rel["id"], rc_number)
+    if rc["state"] == "released":
+        return {"ok": True, "blockers": [], "warnings": [], "already_released": True,
+                "rc": dict(rc)}
+    criteria = check_rc_exit_criteria(conn, release_name, rc_number, project_id)
+    if criteria["blockers"]:
+        return {"ok": False, "blockers": criteria["blockers"],
+                "warnings": criteria["warnings"], "rc": dict(rc)}
+    now = utc_now_iso()
+    if notes_md and rc["notes_md"]:
+        notes_md = rc["notes_md"].rstrip() + "\n\n" + notes_md
+    elif not notes_md:
+        notes_md = rc["notes_md"]
+    conn.execute(
+        "UPDATE release_candidates SET state = 'released', released_at = ?, "
+        "notes_md = ?, updated_at = ? WHERE id = ?",
+        (now, notes_md, now, rc["id"]),
+    )
+    updated = dict(conn.execute(
+        "SELECT * FROM release_candidates WHERE id = ?", (rc["id"],)
+    ).fetchone())
+    return {"ok": True, "blockers": [], "warnings": criteria["warnings"], "rc": updated}
+
+
+def set_rc_notes(conn, release_name: str, rc_number: int, notes_md: str,
+                 project_id: int, append: bool = False) -> dict:
+    from db import utc_now_iso
+    rel = _get_release_row(conn, release_name, project_id)
+    rc = _get_rc_row(conn, rel["id"], rc_number)
+    if append and rc["notes_md"]:
+        notes_md = rc["notes_md"].rstrip() + "\n\n" + notes_md
+    conn.execute(
+        "UPDATE release_candidates SET notes_md = ?, updated_at = ? WHERE id = ?",
+        (notes_md, utc_now_iso(), rc["id"]),
+    )
+    return dict(conn.execute(
+        "SELECT * FROM release_candidates WHERE id = ?", (rc["id"],)
+    ).fetchone())
+
+
+def add_release_scope(conn, release_name: str, area_name: str, project_id: int,
+                      rc_number: int | None = None) -> dict:
+    """Add an area to a release's scope (or to a specific RC's scope)."""
+    from db import utc_now_iso
+    rel = _get_release_row(conn, release_name, project_id)
+    area = conn.execute(
+        "SELECT id FROM areas WHERE name = ? AND project_id = ?",
+        (area_name, project_id),
+    ).fetchone()
+    if not area:
+        raise ValueError(f"area not found: {area_name!r}")
+    rc_id = None
+    if rc_number is not None:
+        rc = _get_rc_row(conn, rel["id"], rc_number)
+        rc_id = rc["id"]
+    try:
+        conn.execute(
+            "INSERT INTO release_areas (release_id, rc_id, area_id, created_at) VALUES (?, ?, ?, ?)",
+            (rel["id"], rc_id, area["id"], utc_now_iso()),
+        )
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            raise ValueError(f"{area_name!r} is already in scope for this {'RC' + str(rc_number) if rc_number else 'release'}")
+        raise
+    return {"release": release_name, "area": area_name, "rc_number": rc_number}
+
+
+def remove_release_scope(conn, release_name: str, area_name: str, project_id: int,
+                         rc_number: int | None = None) -> dict:
+    """Remove an area from a release's scope (or from a specific RC's scope)."""
+    rel = _get_release_row(conn, release_name, project_id)
+    area = conn.execute(
+        "SELECT id FROM areas WHERE name = ? AND project_id = ?",
+        (area_name, project_id),
+    ).fetchone()
+    if not area:
+        raise ValueError(f"area not found: {area_name!r}")
+    rc_id = None
+    if rc_number is not None:
+        rc = _get_rc_row(conn, rel["id"], rc_number)
+        rc_id = rc["id"]
+    if rc_id is None:
+        n = conn.execute(
+            "DELETE FROM release_areas WHERE release_id = ? AND rc_id IS NULL AND area_id = ?",
+            (rel["id"], area["id"]),
+        ).rowcount
+    else:
+        n = conn.execute(
+            "DELETE FROM release_areas WHERE release_id = ? AND rc_id = ? AND area_id = ?",
+            (rel["id"], rc_id, area["id"]),
+        ).rowcount
+    if n == 0:
+        raise ValueError(f"{area_name!r} was not in scope for this {'RC' + str(rc_number) if rc_number else 'release'}")
+    return {"release": release_name, "area": area_name, "rc_number": rc_number, "removed": True}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 def retitle_step(conn, step_number: int, new_title: str,
                  user_id: int | None = None, project_id: int | None = None) -> dict:
     """Retitle a step by sub_index. Preserves status, completed_at, and order."""
