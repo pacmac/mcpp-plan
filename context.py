@@ -1563,7 +1563,7 @@ def get_release(conn, release_name: str, project_id: int) -> dict:
     scope = conn.execute(
         "SELECT a.name, ra.rc_id FROM release_areas ra "
         "JOIN areas a ON a.id = ra.area_id "
-        "WHERE ra.release_id = ? ORDER BY ra.rc_id NULLS FIRST, a.name",
+        "WHERE ra.release_id = ? ORDER BY ra.rc_id NULLS FIRST, ra.id",
         (rel["id"],),
     ).fetchall()
     rel["scope"] = [dict(s) for s in scope]
