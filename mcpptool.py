@@ -827,6 +827,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_rc_new":        _cmd_rc_new,
         "plan_rc_start":      _cmd_rc_start,
         "plan_rc_release":    _cmd_rc_release,
+        "plan_rc_deploy":     _cmd_rc_deploy,
         "plan_rc_notes":      _cmd_rc_notes,
         # Report tools
         "plan_project_report": _cmd_project_report,
@@ -1502,9 +1503,19 @@ def _cmd_release_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
         if rcs:
             lines.append("**Release candidates:**")
             for rc in rcs:
-                released = f" (released {rc['released_at'][:10]})" if rc.get("released_at") else ""
+                released = f" released:{rc['released_at'][:10]}" if rc.get("released_at") else ""
                 target = f" → {rc['target_date']}" if rc.get("target_date") else ""
-                lines.append(f"  RC{rc['rc_number']} [{rc['state']}]{target}{released}")
+                sha = f" commit:{rc['commit_sha'][:8]}" if rc.get("commit_sha") else ""
+                artifact = f" artifact:{rc['artifact_ref']}" if rc.get("artifact_ref") else ""
+                if rc.get("deployed_at"):
+                    deploy = f" deployed:{rc['deployed_at'][:10]}"
+                    if rc.get("deployed_ref"):
+                        deploy += f"({rc['deployed_ref']})"
+                elif rc.get("state") == "released":
+                    deploy = " deployed:never"
+                else:
+                    deploy = ""
+                lines.append(f"  RC{rc['rc_number']} [{rc['state']}]{target}{released}{sha}{artifact}{deploy}")
         scope = rel.get("scope", [])
         if scope:
             lines.append("")
@@ -1616,9 +1627,12 @@ def _cmd_rc_release(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
     conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
     try:
         result = plan_ctx.release_rc(conn, release, rc_number, project_id=project_id,
-                                     notes_md=args.get("notes"))
+                                     notes_md=args.get("notes"),
+                                     artifact_ref=args.get("artifact_ref"))
         if result["ok"]:
-            lines = [f"RC{rc_number} for **{release}** released."]
+            rc_row = result.get("rc", {})
+            sha_str = f"  commit: {rc_row['commit_sha']}" if rc_row.get("commit_sha") else ""
+            lines = [f"RC{rc_number} for **{release}** released." + (f"  ({sha_str.strip()})" if sha_str else "")]
             if result.get("warnings"):
                 lines += [f"  ⚠ {w}" for w in result["warnings"]]
             return {"success": True, "result": result, "display": "\n".join(lines)}
@@ -1650,6 +1664,26 @@ def _cmd_rc_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
                                        append=args.get("append", False))
         return {"success": True, "result": result,
                 "display": f"Notes set for RC{rc_number} of **{release}**"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_rc_deploy(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    release = args.get("release")
+    rc_number = args.get("rc_number")
+    if not release or rc_number is None:
+        return {"success": False, "error": "release and rc_number are required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.deploy_rc(conn, release, rc_number, project_id=project_id,
+                                    deployed_ref=args.get("ref"))
+        ref_str = f" ref: {result['deployed_ref']}" if result.get("deployed_ref") else ""
+        return {"success": True, "result": result,
+                "display": f"RC{rc_number} for **{release}** marked deployed.{ref_str}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
