@@ -1712,7 +1712,18 @@ def check_rc_exit_criteria(conn, release_name: str, rc_number: int,
                         f"area {area_name!r}: open depends on {', '.join(open_deps)}"
                     )
 
-    # 3. Warning: unfiled open tasks in this project.
+    # 3. Warning: never-examined scoped areas (0 tasks ever, open or complete).
+    for area_name in scope:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM contexts WHERE project_id = ? AND area = ?",
+            (project_id, area_name),
+        ).fetchone()
+        if row["n"] == 0:
+            warnings.append(
+                f"area {area_name!r} is scoped but never examined (0 tasks ever)"
+            )
+
+    # 4. Warning: unfiled open tasks in this project.
     unfiled = conn.execute(
         "SELECT COUNT(*) AS n FROM contexts "
         "WHERE project_id = ? AND area IS NULL AND status != 'completed'",
