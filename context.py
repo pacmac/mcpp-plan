@@ -1522,7 +1522,6 @@ def _get_rc_row(conn, release_id: int, rc_number: int):
 
 def create_release(conn, name: str, project_id: int, description_md=None,
                    start_date=None, target_date=None) -> dict:
-    from db import utc_now_iso
     name = name.strip()
     if not name:
         raise ValueError("release name cannot be empty")
@@ -1532,7 +1531,7 @@ def create_release(conn, name: str, project_id: int, description_md=None,
     ).fetchone()
     if existing:
         raise ValueError(f"release already exists: {name!r}")
-    now = utc_now_iso()
+    now = db.utc_now_iso()
     cur = conn.execute(
         "INSERT INTO releases (project_id, name, description_md, state, "
         "start_date, target_date, notes_md, created_at, updated_at) "
@@ -1574,9 +1573,8 @@ def get_release(conn, release_name: str, project_id: int) -> dict:
 def set_release_state(conn, release_name: str, state: str, project_id: int) -> dict:
     if state not in _VALID_RELEASE_STATES:
         raise ValueError(f"invalid state: {state!r}; must be one of {sorted(_VALID_RELEASE_STATES)}")
-    from db import utc_now_iso
     rel = _get_release_row(conn, release_name, project_id)
-    now = utc_now_iso()
+    now = db.utc_now_iso()
     released_at = now if state == "released" else rel["released_at"]
     conn.execute(
         "UPDATE releases SET state = ?, released_at = ?, updated_at = ? WHERE id = ?",
@@ -1587,20 +1585,18 @@ def set_release_state(conn, release_name: str, state: str, project_id: int) -> d
 
 def set_release_notes(conn, release_name: str, notes_md: str, project_id: int,
                       append: bool = False) -> dict:
-    from db import utc_now_iso
     rel = _get_release_row(conn, release_name, project_id)
     if append and rel["notes_md"]:
         notes_md = rel["notes_md"].rstrip() + "\n\n" + notes_md
     conn.execute(
         "UPDATE releases SET notes_md = ?, updated_at = ? WHERE id = ?",
-        (notes_md, utc_now_iso(), rel["id"]),
+        (notes_md, db.utc_now_iso(), rel["id"]),
     )
     return dict(conn.execute("SELECT * FROM releases WHERE id = ?", (rel["id"],)).fetchone())
 
 
 def create_rc(conn, release_name: str, project_id: int, rc_number: int | None = None,
               start_date=None, target_date=None, notes_md=None) -> dict:
-    from db import utc_now_iso
     rel = _get_release_row(conn, release_name, project_id)
     if rc_number is None:
         row = conn.execute(
@@ -1614,7 +1610,7 @@ def create_rc(conn, release_name: str, project_id: int, rc_number: int | None = 
     ).fetchone()
     if existing:
         raise ValueError(f"RC{rc_number} already exists for release {release_name!r}")
-    now = utc_now_iso()
+    now = db.utc_now_iso()
     cur = conn.execute(
         "INSERT INTO release_candidates (release_id, rc_number, state, "
         "start_date, target_date, notes_md, created_at, updated_at) "
@@ -1628,7 +1624,6 @@ def create_rc(conn, release_name: str, project_id: int, rc_number: int | None = 
 
 def start_rc(conn, release_name: str, rc_number: int, project_id: int) -> dict:
     """Set RC active. Gate: all earlier RCs for this release must be released."""
-    from db import utc_now_iso
     rel = _get_release_row(conn, release_name, project_id)
     rc = _get_rc_row(conn, rel["id"], rc_number)
     if rc["state"] == "active":
@@ -1643,7 +1638,7 @@ def start_rc(conn, release_name: str, rc_number: int, project_id: int) -> dict:
     if blocking:
         names = ", ".join(f"RC{r['rc_number']} ({r['state']})" for r in blocking)
         raise ValueError(f"cannot start RC{rc_number}: earlier RC(s) not yet released: {names}")
-    now = utc_now_iso()
+    now = db.utc_now_iso()
     conn.execute(
         "UPDATE release_candidates SET state = 'active', updated_at = ? WHERE id = ?",
         (now, rc["id"]),
@@ -1734,7 +1729,6 @@ def check_rc_exit_criteria(conn, release_name: str, rc_number: int,
 def release_rc(conn, release_name: str, rc_number: int, project_id: int,
                notes_md: str | None = None) -> dict:
     """Attempt to release an RC. Returns result dict with ok, blockers, warnings."""
-    from db import utc_now_iso
     rel = _get_release_row(conn, release_name, project_id)
     rc = _get_rc_row(conn, rel["id"], rc_number)
     if rc["state"] == "released":
@@ -1744,7 +1738,7 @@ def release_rc(conn, release_name: str, rc_number: int, project_id: int,
     if criteria["blockers"]:
         return {"ok": False, "blockers": criteria["blockers"],
                 "warnings": criteria["warnings"], "rc": dict(rc)}
-    now = utc_now_iso()
+    now = db.utc_now_iso()
     if notes_md and rc["notes_md"]:
         notes_md = rc["notes_md"].rstrip() + "\n\n" + notes_md
     elif not notes_md:
@@ -1762,14 +1756,13 @@ def release_rc(conn, release_name: str, rc_number: int, project_id: int,
 
 def set_rc_notes(conn, release_name: str, rc_number: int, notes_md: str,
                  project_id: int, append: bool = False) -> dict:
-    from db import utc_now_iso
     rel = _get_release_row(conn, release_name, project_id)
     rc = _get_rc_row(conn, rel["id"], rc_number)
     if append and rc["notes_md"]:
         notes_md = rc["notes_md"].rstrip() + "\n\n" + notes_md
     conn.execute(
         "UPDATE release_candidates SET notes_md = ?, updated_at = ? WHERE id = ?",
-        (notes_md, utc_now_iso(), rc["id"]),
+        (notes_md, db.utc_now_iso(), rc["id"]),
     )
     return dict(conn.execute(
         "SELECT * FROM release_candidates WHERE id = ?", (rc["id"],)
@@ -1779,7 +1772,6 @@ def set_rc_notes(conn, release_name: str, rc_number: int, notes_md: str,
 def add_release_scope(conn, release_name: str, area_name: str, project_id: int,
                       rc_number: int | None = None) -> dict:
     """Add an area to a release's scope (or to a specific RC's scope)."""
-    from db import utc_now_iso
     rel = _get_release_row(conn, release_name, project_id)
     area = conn.execute(
         "SELECT id FROM areas WHERE name = ? AND project_id = ?",
@@ -1794,7 +1786,7 @@ def add_release_scope(conn, release_name: str, area_name: str, project_id: int,
     try:
         conn.execute(
             "INSERT INTO release_areas (release_id, rc_id, area_id, created_at) VALUES (?, ?, ?, ?)",
-            (rel["id"], rc_id, area["id"], utc_now_iso()),
+            (rel["id"], rc_id, area["id"], db.utc_now_iso()),
         )
     except Exception as e:
         if "UNIQUE" in str(e):
