@@ -1800,6 +1800,30 @@ def set_rc_notes(conn, release_name: str, rc_number: int, notes_md: str,
     ).fetchone())
 
 
+def backfill_rc_sha(conn, release_name: str, rc_number: int, project_id: int,
+                    commit_sha: str) -> dict:
+    """One-shot repair: set commit_sha on an RC where it is NULL.
+
+    Raises ValueError if commit_sha is already set — the field records a fact
+    and must not be silently overwritten.
+    """
+    rel = _get_release_row(conn, release_name, project_id)
+    rc = _get_rc_row(conn, rel["id"], rc_number)
+    if rc["commit_sha"] is not None:
+        raise ValueError(
+            f"RC{rc_number} commit_sha is already set ({rc['commit_sha']!r}); "
+            "backfill only works when the field is NULL"
+        )
+    now = db.utc_now_iso()
+    conn.execute(
+        "UPDATE release_candidates SET commit_sha = ?, updated_at = ? WHERE id = ?",
+        (commit_sha, now, rc["id"]),
+    )
+    return dict(conn.execute(
+        "SELECT * FROM release_candidates WHERE id = ?", (rc["id"],)
+    ).fetchone())
+
+
 def deploy_rc(conn, release_name: str, rc_number: int, project_id: int,
               deployed_ref: str | None = None) -> dict:
     """Record that an RC has been deployed. RC must be in 'released' state."""
