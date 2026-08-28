@@ -354,6 +354,177 @@ tools:
       type: object
       properties: {}
 
+  # ── Release / RC tools ──
+  - name: plan_release_new
+    description: "Create a new release for this project (e.g. 'v1.0'). Starts in planning state."
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Release name, e.g. 'v1.0' or 'mesh-gateway-1.0'"
+        description:
+          type: string
+          description: "Optional description"
+        start_date:
+          type: string
+          description: "ISO date YYYY-MM-DD"
+        target_date:
+          type: string
+          description: "ISO date YYYY-MM-DD"
+      required:
+        - name
+
+  - name: plan_release_list
+    description: "List all releases for this project."
+    inputSchema:
+      type: object
+      properties: {}
+
+  - name: plan_release_show
+    description: "Show a release with its RCs, scope, and notes."
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Release name"
+      required:
+        - name
+
+  - name: plan_release_state
+    description: "Set the state of a release: planning | active | released | abandoned"
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Release name"
+        state:
+          type: string
+          enum: [planning, active, released, abandoned]
+      required:
+        - name
+        - state
+
+  - name: plan_release_notes
+    description: "Set (or append to) release notes."
+    inputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: "Release name"
+        notes:
+          type: string
+          description: "Markdown notes"
+        append:
+          type: boolean
+          description: "Append to existing notes instead of replacing (default false)"
+      required:
+        - name
+        - notes
+
+  - name: plan_release_scope
+    description: "Add or remove an area from a release's scope (or a specific RC's scope)."
+    inputSchema:
+      type: object
+      properties:
+        release:
+          type: string
+          description: "Release name"
+        area:
+          type: string
+          description: "Area name"
+        action:
+          type: string
+          enum: [add, remove]
+          description: "add (default) or remove"
+        rc_number:
+          type: integer
+          description: "Scope to this RC only; omit to apply to the whole release"
+      required:
+        - release
+        - area
+
+  - name: plan_rc_new
+    description: "Add a release candidate to a release. rc_number auto-increments if omitted."
+    inputSchema:
+      type: object
+      properties:
+        release:
+          type: string
+          description: "Release name"
+        rc_number:
+          type: integer
+          description: "RC number (1, 2, 3 …). Auto-assigned if omitted."
+        start_date:
+          type: string
+          description: "ISO date"
+        target_date:
+          type: string
+          description: "ISO date"
+        notes:
+          type: string
+          description: "Initial notes"
+      required:
+        - release
+
+  - name: plan_rc_start
+    description: "Set an RC active. Gate: all earlier RCs for this release must be released first."
+    inputSchema:
+      type: object
+      properties:
+        release:
+          type: string
+          description: "Release name"
+        rc_number:
+          type: integer
+          description: "RC number to start"
+      required:
+        - release
+        - rc_number
+
+  - name: plan_rc_release
+    description: "Attempt to release an RC. Returns blockers (open tasks, open depends) or marks it released. Also warns about unfiled tasks."
+    inputSchema:
+      type: object
+      properties:
+        release:
+          type: string
+          description: "Release name"
+        rc_number:
+          type: integer
+          description: "RC number to release"
+        notes:
+          type: string
+          description: "Optional release notes to append"
+      required:
+        - release
+        - rc_number
+
+  - name: plan_rc_notes
+    description: "Set (or append to) notes on a release candidate."
+    inputSchema:
+      type: object
+      properties:
+        release:
+          type: string
+          description: "Release name"
+        rc_number:
+          type: integer
+          description: "RC number"
+        notes:
+          type: string
+          description: "Markdown notes"
+        append:
+          type: boolean
+          description: "Append to existing notes (default false)"
+      required:
+        - release
+        - rc_number
+        - notes
+
   # ── Step tools (individual items) ──
   - name: plan_step_switch
     description: "Switch to a specific step within active task"
