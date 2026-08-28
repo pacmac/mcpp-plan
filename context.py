@@ -1800,6 +1800,21 @@ def set_rc_notes(conn, release_name: str, rc_number: int, notes_md: str,
     ).fetchone())
 
 
+def set_rc_artifact(conn, release_name: str, rc_number: int, project_id: int,
+                    artifact_ref: str) -> dict:
+    """Set or update artifact_ref on an RC. No state restriction — call any time."""
+    rel = _get_release_row(conn, release_name, project_id)
+    rc = _get_rc_row(conn, rel["id"], rc_number)
+    now = db.utc_now_iso()
+    conn.execute(
+        "UPDATE release_candidates SET artifact_ref = ?, updated_at = ? WHERE id = ?",
+        (artifact_ref, now, rc["id"]),
+    )
+    return dict(conn.execute(
+        "SELECT * FROM release_candidates WHERE id = ?", (rc["id"],)
+    ).fetchone())
+
+
 def backfill_rc_sha(conn, release_name: str, rc_number: int, project_id: int,
                     commit_sha: str) -> dict:
     """One-shot repair: set commit_sha on an RC where it is NULL.
