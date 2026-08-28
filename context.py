@@ -1738,7 +1738,7 @@ def check_rc_exit_criteria(conn, release_name: str, rc_number: int,
 
 
 def release_rc(conn, release_name: str, rc_number: int, project_id: int,
-               notes_md: str | None = None) -> dict:
+               notes_md: str | None = None, artifact_ref: str | None = None) -> dict:
     """Attempt to release an RC. Returns result dict with ok, blockers, warnings."""
     rel = _get_release_row(conn, release_name, project_id)
     rc = _get_rc_row(conn, rel["id"], rc_number)
@@ -1754,15 +1754,35 @@ def release_rc(conn, release_name: str, rc_number: int, project_id: int,
         notes_md = rc["notes_md"].rstrip() + "\n\n" + notes_md
     elif not notes_md:
         notes_md = rc["notes_md"]
+    # Auto-capture commit SHA from the project workspace.
+    commit_sha = None
+    warnings = list(criteria["warnings"])
+    project = db.get_project_by_id(conn, project_id)
+    if project:
+        import subprocess as _sp
+        try:
+            res = _sp.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=project["absolute_path"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if res.returncode == 0:
+                commit_sha = res.stdout.strip()
+        except Exception:
+            pass
+    if commit_sha is None:
+        warnings.append("commit_sha could not be captured (git unavailable)")
+    if artifact_ref is None:
+        warnings.append("RC released with no artifact reference recorded")
     conn.execute(
         "UPDATE release_candidates SET state = 'released', released_at = ?, "
-        "notes_md = ?, updated_at = ? WHERE id = ?",
-        (now, notes_md, now, rc["id"]),
+        "notes_md = ?, commit_sha = ?, artifact_ref = ?, updated_at = ? WHERE id = ?",
+        (now, notes_md, commit_sha, artifact_ref, now, rc["id"]),
     )
     updated = dict(conn.execute(
         "SELECT * FROM release_candidates WHERE id = ?", (rc["id"],)
     ).fetchone())
-    return {"ok": True, "blockers": [], "warnings": criteria["warnings"], "rc": updated}
+    return {"ok": True, "blockers": [], "warnings": warnings, "rc": updated}
 
 
 def set_rc_notes(conn, release_name: str, rc_number: int, notes_md: str,
@@ -1774,6 +1794,25 @@ def set_rc_notes(conn, release_name: str, rc_number: int, notes_md: str,
     conn.execute(
         "UPDATE release_candidates SET notes_md = ?, updated_at = ? WHERE id = ?",
         (notes_md, db.utc_now_iso(), rc["id"]),
+    )
+    return dict(conn.execute(
+        "SELECT * FROM release_candidates WHERE id = ?", (rc["id"],)
+    ).fetchone())
+
+
+def deploy_rc(conn, release_name: str, rc_number: int, project_id: int,
+              deployed_ref: str | None = None) -> dict:
+    """Record that an RC has been deployed. RC must be in 'released' state."""
+    rel = _get_release_row(conn, release_name, project_id)
+    rc = _get_rc_row(conn, rel["id"], rc_number)
+    if rc["state"] != "released":
+        raise ValueError(
+            f"RC{rc_number} is {rc['state']!r}; only released RCs can be marked deployed"
+        )
+    now = db.utc_now_iso()
+    conn.execute(
+        "UPDATE release_candidates SET deployed_at = ?, deployed_ref = ?, updated_at = ? WHERE id = ?",
+        (now, deployed_ref, now, rc["id"]),
     )
     return dict(conn.execute(
         "SELECT * FROM release_candidates WHERE id = ?", (rc["id"],)
