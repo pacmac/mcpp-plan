@@ -827,8 +827,9 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_rc_new":        _cmd_rc_new,
         "plan_rc_start":      _cmd_rc_start,
         "plan_rc_release":    _cmd_rc_release,
-        "plan_rc_deploy":     _cmd_rc_deploy,
-        "plan_rc_notes":      _cmd_rc_notes,
+        "plan_rc_deploy":         _cmd_rc_deploy,
+        "plan_rc_backfill_sha":   _cmd_rc_backfill_sha,
+        "plan_rc_notes":          _cmd_rc_notes,
         # Report tools
         "plan_project_report": _cmd_project_report,
         "plan_task_report": _cmd_task_report,
@@ -1684,6 +1685,26 @@ def _cmd_rc_deploy(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         ref_str = f" ref: {result['deployed_ref']}" if result.get("deployed_ref") else ""
         return {"success": True, "result": result,
                 "display": f"RC{rc_number} for **{release}** marked deployed.{ref_str}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_rc_backfill_sha(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    release = args.get("release")
+    rc_number = args.get("rc_number")
+    commit_sha = args.get("commit_sha")
+    if not release or rc_number is None or not commit_sha:
+        return {"success": False, "error": "release, rc_number, and commit_sha are required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.backfill_rc_sha(conn, release, rc_number, project_id=project_id,
+                                          commit_sha=commit_sha)
+        return {"success": True, "result": result,
+                "display": f"RC{rc_number} for **{release}**: commit_sha set to {commit_sha[:8]}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
