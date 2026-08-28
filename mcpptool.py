@@ -817,6 +817,17 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_roadmap_focus": _cmd_roadmap_focus,
         "plan_roadmap_next":  _cmd_roadmap_next,
         "plan_roadmap_all":   _cmd_roadmap_all,
+        # Release / RC tools
+        "plan_release_new":   _cmd_release_new,
+        "plan_release_list":  _cmd_release_list,
+        "plan_release_show":  _cmd_release_show,
+        "plan_release_state": _cmd_release_state,
+        "plan_release_notes": _cmd_release_notes,
+        "plan_release_scope": _cmd_release_scope,
+        "plan_rc_new":        _cmd_rc_new,
+        "plan_rc_start":      _cmd_rc_start,
+        "plan_rc_release":    _cmd_rc_release,
+        "plan_rc_notes":      _cmd_rc_notes,
         # Report tools
         "plan_project_report": _cmd_project_report,
         "plan_task_report": _cmd_task_report,
@@ -1427,6 +1438,250 @@ def _cmd_area_describe(workspace_dir: str, args: dict[str, Any]) -> dict[str, An
         return {"success": True, "result": {"name": name},
                 "display": f"Updated **{name}**: {', '.join(parts)}"}
     except ValueError as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_release_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    if not name:
+        return {"success": False, "error": "name is required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.create_release(
+            conn, name, project_id=project_id,
+            description_md=args.get("description"),
+            start_date=args.get("start_date"),
+            target_date=args.get("target_date"),
+        )
+        return {"success": True, "result": result,
+                "display": f"Release created: **{name}** (planning)"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_release_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        releases = plan_ctx.list_releases(conn, project_id=project_id)
+        if not releases:
+            return {"success": True, "result": [], "display": "No releases defined."}
+        lines = [f"**Releases** ({len(releases)})"]
+        for r in releases:
+            target = f" → {r['target_date']}" if r.get("target_date") else ""
+            rc_note = f", {r['rc_count']} RC(s)" if r.get("rc_count") else ""
+            lines.append(f"  - **{r['name']}** [{r['state']}]{target}{rc_note}")
+        return {"success": True, "result": releases, "display": "\n".join(lines)}
+    finally:
+        conn.close()
+
+
+def _cmd_release_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    if not name:
+        return {"success": False, "error": "name is required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        rel = plan_ctx.get_release(conn, name, project_id=project_id)
+        lines = [f"**Release: {rel['name']}** [{rel['state']}]"]
+        if rel.get("description_md"):
+            lines.append(rel["description_md"].split("\n")[0])
+        if rel.get("target_date"):
+            lines.append(f"  target: {rel['target_date']}")
+        lines.append("")
+        rcs = rel.get("candidates", [])
+        if rcs:
+            lines.append("**Release candidates:**")
+            for rc in rcs:
+                released = f" (released {rc['released_at'][:10]})" if rc.get("released_at") else ""
+                target = f" → {rc['target_date']}" if rc.get("target_date") else ""
+                lines.append(f"  RC{rc['rc_number']} [{rc['state']}]{target}{released}")
+        scope = rel.get("scope", [])
+        if scope:
+            lines.append("")
+            lines.append("**Scope:**")
+            release_areas = [s for s in scope if s.get("rc_id") is None]
+            rc_areas = [s for s in scope if s.get("rc_id") is not None]
+            if release_areas:
+                lines.append(f"  (all RCs): {', '.join(s['name'] for s in release_areas)}")
+            for rc in rcs:
+                specific = [s for s in rc_areas if s.get("rc_id") == rc["id"]]
+                if specific:
+                    lines.append(f"  RC{rc['rc_number']}: {', '.join(s['name'] for s in specific)}")
+        if rel.get("notes_md"):
+            lines.append("")
+            lines.append("**Notes:**")
+            lines.append(rel["notes_md"])
+        return {"success": True, "result": rel, "display": "\n".join(lines)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_release_state(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    state = args.get("state")
+    if not name or not state:
+        return {"success": False, "error": "name and state are required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.set_release_state(conn, name, state, project_id=project_id)
+        return {"success": True, "result": result,
+                "display": f"Release **{name}** → {state}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_release_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    name = args.get("name")
+    notes = args.get("notes")
+    if not name or notes is None:
+        return {"success": False, "error": "name and notes are required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.set_release_notes(conn, name, notes, project_id=project_id,
+                                            append=args.get("append", False))
+        return {"success": True, "result": result, "display": f"Release notes set for **{name}**"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_rc_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    release = args.get("release")
+    if not release:
+        return {"success": False, "error": "release is required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        rc_number = args.get("rc_number")
+        result = plan_ctx.create_rc(
+            conn, release, project_id=project_id,
+            rc_number=rc_number,
+            start_date=args.get("start_date"),
+            target_date=args.get("target_date"),
+            notes_md=args.get("notes"),
+        )
+        return {"success": True, "result": result,
+                "display": f"RC{result['rc_number']} created for **{release}** (planning)"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_rc_start(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    release = args.get("release")
+    rc_number = args.get("rc_number")
+    if not release or rc_number is None:
+        return {"success": False, "error": "release and rc_number are required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.start_rc(conn, release, rc_number, project_id=project_id)
+        return {"success": True, "result": result,
+                "display": f"RC{rc_number} for **{release}** → active"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_rc_release(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    release = args.get("release")
+    rc_number = args.get("rc_number")
+    if not release or rc_number is None:
+        return {"success": False, "error": "release and rc_number are required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.release_rc(conn, release, rc_number, project_id=project_id,
+                                     notes_md=args.get("notes"))
+        if result["ok"]:
+            lines = [f"RC{rc_number} for **{release}** released."]
+            if result.get("warnings"):
+                lines += [f"  ⚠ {w}" for w in result["warnings"]]
+            return {"success": True, "result": result, "display": "\n".join(lines)}
+        else:
+            lines = [f"RC{rc_number} for **{release}** cannot be released — blockers:"]
+            lines += [f"  - {b}" for b in result["blockers"]]
+            if result.get("warnings"):
+                lines.append("")
+                lines += [f"  ⚠ {w}" for w in result["warnings"]]
+            return {"success": True, "result": result, "display": "\n".join(lines)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_rc_notes(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    release = args.get("release")
+    rc_number = args.get("rc_number")
+    notes = args.get("notes")
+    if not release or rc_number is None or notes is None:
+        return {"success": False, "error": "release, rc_number, and notes are required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.set_rc_notes(conn, release, rc_number, notes,
+                                       project_id=project_id,
+                                       append=args.get("append", False))
+        return {"success": True, "result": result,
+                "display": f"Notes set for RC{rc_number} of **{release}**"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_release_scope(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    release = args.get("release")
+    area = args.get("area")
+    action = args.get("action", "add")
+    if not release or not area:
+        return {"success": False, "error": "release and area are required"}
+    if action not in ("add", "remove"):
+        return {"success": False, "error": "action must be 'add' or 'remove'"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        rc_number = args.get("rc_number")
+        if action == "add":
+            result = plan_ctx.add_release_scope(conn, release, area, project_id=project_id,
+                                                rc_number=rc_number)
+            scope_str = f"RC{rc_number}" if rc_number is not None else "all RCs"
+            return {"success": True, "result": result,
+                    "display": f"**{area}** added to scope of **{release}** ({scope_str})"}
+        else:
+            result = plan_ctx.remove_release_scope(conn, release, area, project_id=project_id,
+                                                   rc_number=rc_number)
+            scope_str = f"RC{rc_number}" if rc_number is not None else "all RCs"
+            return {"success": True, "result": result,
+                    "display": f"**{area}** removed from scope of **{release}** ({scope_str})"}
+    except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
         conn.close()
