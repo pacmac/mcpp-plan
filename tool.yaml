@@ -486,7 +486,7 @@ tools:
         - rc_number
 
   - name: plan_rc_release
-    description: "Attempt to release an RC. Returns blockers (open tasks, open depends) or marks it released. Also warns about unfiled tasks."
+    description: "Attempt to release an RC. Returns blockers (open tasks, open depends) or marks it released. Also warns about unfiled tasks and missing artifact_ref. Captures commit SHA from HEAD automatically."
     inputSchema:
       type: object
       properties:
@@ -499,6 +499,27 @@ tools:
         notes:
           type: string
           description: "Optional release notes to append"
+        artifact_ref:
+          type: string
+          description: "Optional free-text artifact identity (e.g. 'firmware.bin 1343936B sha256=abc'). Stored verbatim. Warns if absent."
+      required:
+        - release
+        - rc_number
+
+  - name: plan_rc_deploy
+    description: "Record that a released RC has been deployed (e.g. flashed to hardware). Sets deployed_at timestamp and an optional free-text ref. Never gated — call when the physical act is confirmed."
+    inputSchema:
+      type: object
+      properties:
+        release:
+          type: string
+          description: "Release name"
+        rc_number:
+          type: integer
+          description: "RC number"
+        ref:
+          type: string
+          description: "Optional free-text deployment description (e.g. 'OTA bench rotator', 'USB flash prod unit')"
       required:
         - release
         - rc_number
