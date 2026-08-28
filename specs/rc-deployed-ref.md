@@ -68,10 +68,24 @@ plan_rc_deploy(release, rc_number, ref=None)
 Sets deployed_at and deployed_ref on a released RC. `ref` is free-text; the
 project gives it meaning. Never blocks on absence.
 
+### New: backfill_rc_sha (context.py)
+
+```python
+def backfill_rc_sha(conn, release_name, rc_number, project_id, commit_sha) -> dict:
+```
+
+- Repair tool: sets `commit_sha` on a released RC where it is currently NULL.
+- Raises `ValueError` if `commit_sha` is already set (prevents silent overwrite
+  of the only factual field on the RC).
+- No state restriction beyond "must exist" — backfill is for RCs released before
+  patch-21 and cannot wait for a state change.
+
+New tool: `plan_rc_backfill_sha(release, rc_number, commit_sha)` in mcpptool.py + tool.yaml.
+
 ## Files changing
 
 - `schema_patches/patch-21.sql` (new, requires `git add -f`)
 - `db.py` — `LATEST_SCHEMA_VERSION = 21`
-- `context.py` — `release_rc`, `get_release`, new `deploy_rc`
-- `mcpptool.py` — `_cmd_rc_release` updated, new `_cmd_rc_deploy`
-- `tool.yaml` — update `plan_rc_release` params, add `plan_rc_deploy`
+- `context.py` — `release_rc`, `get_release`, new `deploy_rc`, new `backfill_rc_sha`
+- `mcpptool.py` — `_cmd_rc_release` updated, new `_cmd_rc_deploy`, new `_cmd_rc_backfill_sha`
+- `tool.yaml` — update `plan_rc_release` params, add `plan_rc_deploy`, add `plan_rc_backfill_sha`
