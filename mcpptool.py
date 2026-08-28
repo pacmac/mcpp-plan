@@ -829,6 +829,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_rc_release":    _cmd_rc_release,
         "plan_rc_deploy":         _cmd_rc_deploy,
         "plan_rc_backfill_sha":   _cmd_rc_backfill_sha,
+        "plan_rc_artifact":       _cmd_rc_artifact,
         "plan_rc_notes":          _cmd_rc_notes,
         # Report tools
         "plan_project_report": _cmd_project_report,
@@ -1507,7 +1508,12 @@ def _cmd_release_show(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any
                 released = f" released:{rc['released_at'][:10]}" if rc.get("released_at") else ""
                 target = f" → {rc['target_date']}" if rc.get("target_date") else ""
                 sha = f" commit:{rc['commit_sha'][:8]}" if rc.get("commit_sha") else ""
-                artifact = f" artifact:{rc['artifact_ref']}" if rc.get("artifact_ref") else ""
+                if rc.get("artifact_ref"):
+                    artifact = f" artifact:{rc['artifact_ref']}"
+                elif rc.get("state") == "released":
+                    artifact = " artifact:<none>"
+                else:
+                    artifact = ""
                 if rc.get("deployed_at"):
                     deploy = f" deployed:{rc['deployed_at'][:10]}"
                     if rc.get("deployed_ref"):
@@ -1685,6 +1691,26 @@ def _cmd_rc_deploy(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         ref_str = f" ref: {result['deployed_ref']}" if result.get("deployed_ref") else ""
         return {"success": True, "result": result,
                 "display": f"RC{rc_number} for **{release}** marked deployed.{ref_str}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+def _cmd_rc_artifact(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    release = args.get("release")
+    rc_number = args.get("rc_number")
+    artifact_ref = args.get("artifact_ref")
+    if not release or rc_number is None or not artifact_ref:
+        return {"success": False, "error": "release, rc_number, and artifact_ref are required"}
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        result = plan_ctx.set_rc_artifact(conn, release, rc_number, project_id=project_id,
+                                          artifact_ref=artifact_ref)
+        return {"success": True, "result": result,
+                "display": f"RC{rc_number} for **{release}**: artifact_ref set"}
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
