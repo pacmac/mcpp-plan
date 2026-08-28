@@ -524,6 +524,25 @@ tools:
         - release
         - rc_number
 
+  - name: plan_rc_artifact
+    description: "Set or update artifact_ref on a release candidate. No state restriction — call any time, including after release. artifact_ref is free-text; the project gives it meaning (e.g. 'firmware.bin 1343936B sha256=...')."
+    inputSchema:
+      type: object
+      properties:
+        release:
+          type: string
+          description: "Release name"
+        rc_number:
+          type: integer
+          description: "RC number"
+        artifact_ref:
+          type: string
+          description: "Free-text artifact description (caller-defined format)"
+      required:
+        - release
+        - rc_number
+        - artifact_ref
+
   - name: plan_rc_backfill_sha
     description: "One-shot repair: set commit_sha on a released RC where it is NULL (e.g. released before patch-21). Refuses if commit_sha is already set — prevents silent overwrite of the provenance fact."
     inputSchema:
