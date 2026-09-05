@@ -817,6 +817,7 @@ def execute(tool_name: str, arguments: dict[str, Any], context: dict[str, Any] |
         "plan_roadmap_focus": _cmd_roadmap_focus,
         "plan_roadmap_next":  _cmd_roadmap_next,
         "plan_roadmap_all":   _cmd_roadmap_all,
+        "plan_area_stats":    _cmd_area_stats,
         # Release / RC tools
         "plan_release_new":   _cmd_release_new,
         "plan_release_list":  _cmd_release_list,
@@ -1987,6 +1988,47 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
         }
     finally:
         conn.close()
+
+
+def _cmd_area_stats(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
+    pkg_path = _pkg_path()
+    plan_db_mod, plan_ctx = _load_pkg(pkg_path)
+    conn, project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
+    try:
+        data = plan_ctx.area_stats(conn, project_id)
+        return {"success": True, "result": data, "display": _area_stats_display(data)}
+    finally:
+        conn.close()
+
+
+def _area_stats_display(data: dict) -> str:
+    proj = data["project"]
+    s = data["summary"]
+    areas = data["areas"]
+    lines = [
+        f"**Area Stats** — {proj['name']}",
+        f"signed-off: {s['signed_off']}/{s['total']}  "
+        f"partial: {s['partial']}  open: {s['open_only']}  not-started: {s['not_started']}",
+        f"tasks open: {s['tasks_open']}  complete: {s['tasks_complete']}",
+        "",
+    ]
+    for a in areas:
+        o, c = a["open"], a["complete"]
+        if o == 0 and c > 0:
+            state = "signed-off"
+        elif o > 0 and c > 0:
+            state = "partial"
+        elif o > 0:
+            state = "open"
+        else:
+            state = "not-started"
+        dep_str = ""
+        if a["depends"]:
+            open_deps = a.get("open_depends") or []
+            dep_str = f"  depends: {', '.join(a['depends'])}" + (
+                f" (blocked on {', '.join(open_deps)})" if open_deps else " (all done)")
+        lines.append(f"  [{state:12s}] **{a['name']}** {o}↑ {c}✓{dep_str}")
+    return "\n".join(lines)
 
 
 def _cmd_task_set_area(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:

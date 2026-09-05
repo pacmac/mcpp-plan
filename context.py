@@ -1494,6 +1494,50 @@ def roadmap_all_data(conn, project_id):
     }
 
 
+def area_stats(conn, project_id: int) -> dict:
+    proj = get_project(conn, project_id=project_id)
+    areas = conn.execute(
+        """
+        SELECT a.name, a.description_md, a.class, a.priority, a.depends,
+               COUNT(CASE WHEN c.status='active' THEN 1 END) AS open,
+               COUNT(CASE WHEN c.status='completed' THEN 1 END) AS complete,
+               MAX(CASE WHEN c.status='completed' THEN c.completed_at END) AS last_closed
+        FROM areas a
+        LEFT JOIN contexts c ON c.project_id = a.project_id AND c.area = a.name
+        WHERE a.project_id = ?
+        GROUP BY a.id ORDER BY
+          CASE WHEN a.class='product' THEN 0 WHEN a.class='tooling' THEN 1 ELSE 2 END,
+          COALESCE(a.priority, 999999), a.name
+        """,
+        (project_id,),
+    ).fetchall()
+    signed_off_set = set()
+    area_list = []
+    for r in areas:
+        d = dict(r)
+        d["depends"] = _json_dec(d.get("depends")) or []
+        if d["open"] == 0 and d["complete"] > 0:
+            signed_off_set.add(d["name"])
+        area_list.append(d)
+    for a in area_list:
+        a["open_depends"] = [dep for dep in a["depends"] if dep not in signed_off_set]
+    summary = {
+        "total": len(area_list),
+        "signed_off": sum(1 for a in area_list if a["open"] == 0 and a["complete"] > 0),
+        "partial": sum(1 for a in area_list if a["open"] > 0 and a["complete"] > 0),
+        "open_only": sum(1 for a in area_list if a["open"] > 0 and a["complete"] == 0),
+        "not_started": sum(1 for a in area_list if a["open"] == 0 and a["complete"] == 0),
+        "tasks_open": sum(a["open"] for a in area_list),
+        "tasks_complete": sum(a["complete"] for a in area_list),
+    }
+    return {
+        "project": {"name": proj["name"], "description_md": proj.get("description_md")},
+        "read_at": db.utc_now_iso(),
+        "areas": area_list,
+        "summary": summary,
+    }
+
+
 # ── Releases and Release Candidates ──────────────────────────────────────────
 
 _VALID_RELEASE_STATES = {"planning", "active", "released", "abandoned"}

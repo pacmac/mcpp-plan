@@ -354,6 +354,12 @@ tools:
       type: object
       properties: {}
 
+  - name: plan_area_stats
+    description: "Return structured area/task stats for the active project (state, counts, startability). Use the result to build or update the area progress artifact."
+    inputSchema:
+      type: object
+      properties: {}
+
   # ── Release / RC tools ──
   - name: plan_release_new
     description: "Create a new release for this project (e.g. 'v1.0'). Starts in planning state."
