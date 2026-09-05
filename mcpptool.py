@@ -1928,6 +1928,8 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                         f"**Roadmap** (project: {project_name})", "",
                         "No areas defined. Use `plan_area_new` to create areas.",
                     ] + unfiled_lines)}
+        area_total = {a["name"]: (a["open"] + a["complete"]) for a in areas}
+
         def _area_row(a):
             desc_line = (a.get("description_md") or "").split("\n")[0].strip()
             desc = f" — {desc_line}" if desc_line else ""
@@ -1941,9 +1943,13 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
             extra = ""
             if a.get("depends"):
                 open_dep = a.get("open_depends") or []
-                dep_str = ", ".join(
-                    f"{d} ({'open' if d in open_dep else 'done'})" for d in a["depends"]
-                )
+                def _dep_label(d):
+                    if d in open_dep:
+                        return "open"
+                    if area_total.get(d, 0) == 0:
+                        return "never examined"
+                    return "done"
+                dep_str = ", ".join(f"{d} ({_dep_label(d)})" for d in a["depends"])
                 extra += f"\n      depends: {dep_str}"
             if a.get("watch"):
                 extra += f"\n      watch: {', '.join(a['watch'])}"
