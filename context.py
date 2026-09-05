@@ -1531,7 +1531,7 @@ def area_stats(conn, project_id: int) -> dict:
         "tasks_complete": sum(a["complete"] for a in area_list),
     }
     return {
-        "project": {"name": proj["name"], "description_md": proj.get("description_md")},
+        "project": {"name": proj["project_name"], "description_md": proj.get("description_md")},
         "read_at": db.utc_now_iso(),
         "areas": area_list,
         "summary": summary,
