@@ -1312,6 +1312,7 @@ def _cmd_area_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
                     "display": f"Areas created ({len(created)}): {names}"}
         description_md = args.get("description")
         area_class = args.get("class") or None
+        area_type = args.get("type") or None
         priority = args.get("priority")
         scope = args.get("scope") or None
         watch = args.get("watch") or None
@@ -1319,8 +1320,9 @@ def _cmd_area_new(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
         result = plan_ctx.create_area(conn, name, description_md=description_md,
                                       project_id=project_id, area_class=area_class,
                                       priority=priority, scope=scope, watch=watch,
-                                      depends=depends)
-        class_note = f" ({area_class})" if area_class else ""
+                                      depends=depends, area_type=area_type)
+        noted = [v for v in (area_class, area_type) if v]
+        class_note = f" ({', '.join(noted)})" if noted else ""
         return {"success": True, "result": result,
                 "display": f"Area created: **{name}**{class_note}"}
     except Exception as e:
@@ -1340,6 +1342,9 @@ def _cmd_area_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
             desc_line = (a.get("description_md") or "").split("\n")[0].strip()
             desc = f" — {desc_line}" if desc_line else ""
             cls = a.get("class") or "unclassed"
+            # No "untyped" filler: 70 rows predate the field and printing it on
+            # every one of them is noise, not information.
+            typ = f", {a['type']}" if a.get("type") else ""
             pri = f", priority {a['priority']}" if a.get("priority") is not None else ""
             extra = ""
             if a.get("scope"):
@@ -1348,7 +1353,7 @@ def _cmd_area_list(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]:
                 extra += f"\n      watch: {', '.join(a['watch'])}"
             if a.get("depends"):
                 extra += f"\n      depends: {', '.join(a['depends'])}"
-            lines.append(f"  - {a['name']} ({cls}{pri}){desc}{extra}")
+            lines.append(f"  - {a['name']} ({cls}{typ}{pri}){desc}{extra}")
         display = "\n".join(lines) if areas else "No areas defined. Use `plan_area_new` to create one."
         return {"success": True, "result": {"areas": areas}, "display": display}
     finally:
@@ -1398,20 +1403,22 @@ def _cmd_area_describe(workspace_dir: str, args: dict[str, Any]) -> dict[str, An
         return {"success": False, "error": "name is required"}
     description = args.get("description")
     area_class = args.get("class") or None
+    area_type = args.get("type") or None
     priority = args.get("priority")
     scope = args.get("scope") or None
     watch = args.get("watch") or None
     depends = args.get("depends") or None
     _update_class = "class" in args
+    _update_type = "type" in args
     _update_priority = "priority" in args
     _update_desc = "description" in args
     _update_scope = "scope" in args
     _update_watch = "watch" in args
     _update_depends = "depends" in args
     if not any([_update_desc, _update_class, _update_priority,
-                _update_scope, _update_watch, _update_depends]):
+                _update_scope, _update_watch, _update_depends, _update_type]):
         return {"success": False,
-                "error": "supply at least one of: description, class, priority, scope, watch, depends"}
+                "error": "supply at least one of: description, class, type, priority, scope, watch, depends"}
     pkg_path = _pkg_path()
     plan_db_mod, plan_ctx = _load_pkg(pkg_path)
     conn, _project, _is_new, _user_id, project_id = _open_db(plan_db_mod, plan_ctx, Path(workspace_dir))
@@ -1419,10 +1426,11 @@ def _cmd_area_describe(workspace_dir: str, args: dict[str, Any]) -> dict[str, An
         err = plan_ctx.update_area_description(
             conn, name, description, project_id=project_id,
             area_class=area_class, priority=priority,
-            scope=scope, watch=watch, depends=depends,
+            scope=scope, watch=watch, depends=depends, area_type=area_type,
             _update_class=_update_class, _update_priority=_update_priority,
             _update_desc=_update_desc, _update_scope=_update_scope,
             _update_watch=_update_watch, _update_depends=_update_depends,
+            _update_type=_update_type,
         )
         if err:
             return {"success": False, "error": err}
@@ -1431,6 +1439,8 @@ def _cmd_area_describe(workspace_dir: str, args: dict[str, Any]) -> dict[str, An
             parts.append("description")
         if _update_class:
             parts.append(f"class={area_class or 'cleared'}")
+        if _update_type:
+            parts.append(f"type={area_type or 'cleared'}")
         if _update_priority:
             parts.append(f"priority={priority}")
         if _update_scope:
@@ -1954,7 +1964,8 @@ def _cmd_roadmap_all(workspace_dir: str, args: dict[str, Any]) -> dict[str, Any]
                 extra += f"\n      depends: {dep_str}"
             if a.get("watch"):
                 extra += f"\n      watch: {', '.join(a['watch'])}"
-            return f"  - **{a['name']}**{desc}: {a['open']} open, {a['complete']} complete{marker}{extra}"
+            typ = f" [{a['type']}]" if a.get("type") else ""
+            return f"  - **{a['name']}**{typ}{desc}: {a['open']} open, {a['complete']} complete{marker}{extra}"
 
         product = [a for a in areas if a.get("class") == "product"]
         tooling = [a for a in areas if a.get("class") == "tooling"]

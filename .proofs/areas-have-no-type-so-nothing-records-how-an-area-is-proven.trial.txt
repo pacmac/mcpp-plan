@@ -1,0 +1,17 @@
+$ python3 /usr/share/pac/dev/py/mcpp-plan/test_area_type.py
+Testing areas `type` field
+
+  [FAIL] schema: areas.type exists at version 22 -- LATEST_SCHEMA_VERSION=21, areas columns=['class', 'created_at', 'depends', 'description_md', 'id', 'name', 'priority', 'project_id', 'scope', 'updated_at', 'watch']
+  [FAIL] create_area: type round-trips through list_areas -- TypeError: create_area() got an unexpected keyword argument 'area_type'
+  [FAIL] create_area: a value outside the closed set is rejected -- TypeError: create_area() got an unexpected keyword argument 'area_type'
+  [FAIL] create_areas_batch: type set per item -- codec/sleep types=(None, None)
+  [FAIL] create_areas_batch: one bad type rolls the whole batch back -- added despite the bad row: ['bad-one', 'good-one']
+  [FAIL] update_area_description: sets a type on an existing area -- TypeError: update_area_description() got an unexpected keyword argument 'area_type'
+  [FAIL] update_area_description: clears a type -- TypeError: update_area_description() got an unexpected keyword argument 'area_type'
+  [PASS] create_area: no type means NULL, not a default -- type=None
+  [FAIL] area_stats: carries the type -- area_stats codec type=None
+  [FAIL] roadmap_all_data: carries the type -- roadmap_all_data sleep type=None
+  [FAIL] type writes leave class alone -- KeyError: 'gates'
+  [PASS] ordering is still product, tooling, unclassed -- order=['untyped-area', 'bad-one', 'codec', 'good-one', 'sleep'], ranks=[0, 2, 2, 2, 2]
+
+12 checks, 2 passed, 10 failed

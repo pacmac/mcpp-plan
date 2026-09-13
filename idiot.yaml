@@ -1,0 +1,118 @@
+# Every accusation this repo is under, and what trying it proved.
+# Written only by ~/.claude/hooks/idiot.py. Verdicts are derived, never typed.
+- id: a-fresh-db-is-stamped-at-latest-and-skips-every-patch-from-8
+  type: bug
+  what: ensure_schema stamps a baseline DB as version 21 because contexts has project_id, which arrived
+    in patch-7, so patches 8-21 never run and a fresh plan.db has no areas, releases or release_candidates
+    tables
+  spec: specs/areas-integration.md
+  files:
+  - db.py
+  - schema.sql
+  test:
+    command: null
+    criterion: a DB built from schema.sql then passed to ensure_schema has an areas table
+    runs: 1
+  trial: null
+  fix: null
+- id: area-stats-and-roadmap-disagree-on-what-an-open-dependency-is
+  type: bug
+  what: area_stats treats a dependency with zero tasks ever as still open, roadmap_all_data treats the
+    same dependency as clear, so the two views contradict each other on startability
+  spec: specs/roadmap-depends-never-examined.md
+  files:
+  - context.py
+  test:
+    command: null
+    criterion: both open_depends computations agree for an area whose dependency has never been examined
+    runs: 1
+  trial: null
+  fix: null
+- id: the-area-stats-view-shows-class-but-not-type
+  type: new
+  what: server.py renders the area class badge but not the new type, so the field is invisible in the
+    one view Peter actually looks at
+  spec: specs/area-type-field.md
+  files:
+  - server.py
+  test:
+    command: null
+    criterion: the area stats page shows each area's type where it shows its class, verified in a real
+      browser in both themes
+    runs: 1
+  trial: null
+  fix: null
+- id: areas-have-no-type-so-nothing-records-how-an-area-is-proven
+  type: new
+  what: areas carry class (product|tooling) which says who gets it, but nothing records HOW an area can
+    be proven, so a firmware area and a build-gate area are indistinguishable rows
+  spec: specs/area-type-field.md
+  files:
+  - context.py
+  - mcpptool.py
+  - db.py
+  - tool.yaml
+  - schema_patches/patch-22.sql
+  test:
+    command:
+    - python3
+    - /usr/share/pac/dev/py/mcpp-plan/test_area_type.py
+    criterion: 'test_area_type.py green: the column exists at version 22 and type round-trips through
+      create, batch, update, clear, area_stats and roadmap_all_data'
+    runs: 1
+  trial:
+    file: .proofs/areas-have-no-type-so-nothing-records-how-an-area-is-proven.trial.txt
+    exit: 1
+    runs: 1
+    failures: 1
+    at: '2026-09-13T17:54:43.406'
+    commit: 33ccd28-dirty
+  fix:
+    file: .proofs/areas-have-no-type-so-nothing-records-how-an-area-is-proven.fix.txt
+    exit: 0
+    runs: 1
+    failures: 0
+    at: '2026-09-13T17:58:58.463'
+    commit: 33ccd28-dirty
+- id: test-attachments-hardcodes-schema-version-13-so-every-patch-breaks-it
+  type: bug
+  what: test_attachments.py asserts LATEST_SCHEMA_VERSION is 13; it read 21 before this change and 22
+    after, so it has been red since patch-14 and will break on every future patch
+  spec: specs/area-type-field.md
+  files:
+  - test_attachments.py
+  test:
+    command: null
+    criterion: test_attachments.py is green, and its schema assertion does not name a literal version
+    runs: 1
+  trial: null
+  fix: null
+- id: project-set-and-project-select-ignore-the-web-key-guard
+  type: bug
+  what: 'test_feature_toggles.py fails ''project_set: rejected without key when web.key set'' and ''project_set:
+    error mentions key'' at HEAD and after this change; the key guard is not refusing what the test says
+    it must'
+  spec: specs/area-type-field.md
+  files:
+  - mcpptool.py
+  test:
+    command: null
+    criterion: test_feature_toggles.py is green
+    runs: 1
+  trial: null
+  fix: null
+- id: test-feature-toggles-writes-into-the-live-plan-db-and-steals-the-active-task
+  type: bug
+  what: test_feature_toggles.py creates contexts in the real plan.db instead of a temp one; today's run
+    left test-toggle-318695, test-noleak-318695, test-toggle-318701 and test-noleak-318701 behind and
+    made the last of them the ACTIVE task, which is the state the /idiot gate reads
+  spec: specs/area-type-field.md
+  files:
+  - test_feature_toggles.py
+  test:
+    command: null
+    criterion: running test_feature_toggles.py adds no rows to the repo's plan.db and leaves the active
+      task unchanged
+    runs: 1
+  trial: null
+  fix: null
