@@ -205,6 +205,9 @@ tools:
           type: string
           enum: ["firmware", "service", "library", "contract", "tool", "gate", "doc"]
           description: "HOW this area is PROVEN — independent of class. firmware = runs on a device, proved on hardware or by a build gate, never a host test; service = a long-running host process, proved by being up and answering; library = code with no lifetime, proved by host tests; contract = a shared wire format or schema, proved by peers agreeing and a hash gate holding it; tool = a human or a build runs it, proved by running from where you would reach for it; gate = a check that fails a build, proved by having been seen to go RED; doc = prose that governs work, proved by matching the code it cites. One value only: pick the one whose proof, if skipped, would let a defect through."
+        priority:
+          type: integer
+          description: "Ordering within class (lower = higher priority; omit to sort last)"
         scope:
           type: array
           items:
@@ -312,6 +315,9 @@ tools:
           type: string
           enum: ["firmware", "service", "library", "contract", "tool", "gate", "doc"]
           description: "HOW this area is PROVEN — independent of class, and one value only. firmware = hardware or a build gate, never a host test; service = up and answering; library = host tests; contract = peers agree and a hash gate holds it; tool = it runs from where you would reach for it; gate = it has been seen to go RED; doc = it matches the code it cites. Pass null or an empty string to clear."
+        priority:
+          type: integer
+          description: "Ordering within class (lower = higher priority)"
         scope:
           type: array
           items:

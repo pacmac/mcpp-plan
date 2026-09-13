@@ -116,3 +116,63 @@
     runs: 1
   trial: null
   fix: null
+- id: a-new-sql-patch-is-silently-untracked-because-the-global-gitignore-ignores-sql
+  type: bug
+  what: '*.sql is ignored by /root/.gitignore_global:122, so schema_patches/patch-22.sql needed git add
+    -f; the next patch will be silently left out of its commit and every fresh clone will be a schema
+    version behind'
+  spec: specs/area-type-field.md
+  files:
+  - .gitignore
+  test:
+    command: null
+    criterion: a newly created schema_patches/patch-NN.sql appears in git status without -f
+    runs: 1
+  trial: null
+  fix: null
+- id: tool-yaml-lost-priority-when-type-was-added
+  type: bug
+  what: adding  to tool.yaml replaced the  block instead of sitting beside it, so plan_area_new and plan_area_describe
+    no longer declare priority and it cannot be set through either tool
+  spec: specs/area-type-field.md
+  files:
+  - tool.yaml
+  test:
+    command: null
+    criterion: 'both area tools declare every authorable area field: name, description, class, type, priority,
+      scope, watch, depends'
+    runs: 1
+  trial: null
+  fix: null
+  withdrawn:
+    why: the accusation text was mangled by shell backtick substitution when it was filed and amend cannot
+      correct what; refiled verbatim as area-tools-no-longer-declare-priority
+    at: '2026-09-13T18:09:19.710'
+- id: area-tools-no-longer-declare-priority
+  type: bug
+  what: adding type to tool.yaml replaced the priority block instead of sitting beside it, so plan_area_new
+    and plan_area_describe no longer declare priority and it cannot be set through either tool
+  spec: specs/area-type-field.md
+  files:
+  - tool.yaml
+  test:
+    command:
+    - python3
+    - /usr/share/pac/dev/py/mcpp-plan/test_tool_schema.py
+    criterion: 'both area tools declare every authorable area field: name, description, class, type, priority,
+      scope, watch, depends'
+    runs: 1
+  trial:
+    file: .proofs/area-tools-no-longer-declare-priority.trial.txt
+    exit: 1
+    runs: 1
+    failures: 1
+    at: '2026-09-13T18:09:48.301'
+    commit: 7e0ef71-dirty
+  fix:
+    file: .proofs/area-tools-no-longer-declare-priority.fix.txt
+    exit: 0
+    runs: 1
+    failures: 0
+    at: '2026-09-13T18:10:11.472'
+    commit: 7e0ef71-dirty

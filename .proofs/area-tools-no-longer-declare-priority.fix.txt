@@ -1,0 +1,9 @@
+$ python3 /usr/share/pac/dev/py/mcpp-plan/test_tool_schema.py
+Testing tool.yaml area schemas
+
+  [PASS] plan_area_new declares every authorable field -- has ['class', 'depends', 'description', 'items', 'name', 'priority', 'scope', 'type', 'watch']
+  [PASS] plan_area_describe declares every authorable field -- has ['class', 'depends', 'description', 'name', 'priority', 'scope', 'type', 'watch']
+  [PASS] plan_area_new items[] declares every authorable field -- has ['class', 'depends', 'description_md', 'name', 'priority', 'scope', 'type', 'watch']
+  [PASS] the type enum is identical in all three declarations -- ['firmware', 'service', 'library', 'contract', 'tool', 'gate', 'doc']
+
+4 checks, 4 passed, 0 failed
