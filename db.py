@@ -24,6 +24,12 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 
 LATEST_SCHEMA_VERSION = 22
+# What schema.sql itself represents; patches above this still have to run on a
+# DB built from it (test_area_type.py starts from 9: schema.sql already has the
+# note `kind` columns that patch-9 adds).
+SCHEMA_SQL_VERSION = 9
+# patch-14 added contexts.area and the areas table.
+AREAS_PATCH_VERSION = 14
 
 
 # ── Central DB path ──
@@ -128,8 +134,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         # If this is a fresh DB with latest schema, set directly.
         ctx_columns = {row["name"] for row in conn.execute("PRAGMA table_info(contexts)").fetchall()}
         if "project_id" in ctx_columns:
-            set_schema_version(conn, LATEST_SCHEMA_VERSION)
-            version = LATEST_SCHEMA_VERSION
+            # schema.sql is a baseline, not the latest schema: stamp it at the
+            # version it represents so the patches after it still run.
+            set_schema_version(conn, SCHEMA_SQL_VERSION)
+            version = SCHEMA_SQL_VERSION
         elif "is_deleted" in columns:
             set_schema_version(conn, 6)
             version = 6
@@ -138,8 +146,21 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             set_schema_version(conn, 1)
             version = 1
 
+    # Drift repair: a DB stamped past patch-14 whose tables lack what patch-14
+    # adds was stamped wrongly (a baseline DB once got stamped at the latest
+    # version). The stamp is not trusted over the columns. Only the local
+    # `version` changes here; the stored stamp moves patch by patch as the
+    # verified, trial-migrated patches apply.
+    if version >= AREAS_PATCH_VERSION:
+        drift_ctx = {row["name"] for row in conn.execute("PRAGMA table_xinfo(contexts)").fetchall()}
+        has_areas = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='areas'"
+        ).fetchone()
+        if "area" not in drift_ctx or not has_areas:
+            version = SCHEMA_SQL_VERSION
+
     if version < LATEST_SCHEMA_VERSION:
-        db_path = Path(conn.execute("PRAGMA database_list").fetchone()["file"])
+        db_path =Path(conn.execute("PRAGMA database_list").fetchone()["file"])
         if db_path.exists():
             from .backup import (
                 create_verified_backup, table_row_counts,

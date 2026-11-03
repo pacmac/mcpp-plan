@@ -10,11 +10,26 @@
   - db.py
   - schema.sql
   test:
-    command: null
-    criterion: a DB built from schema.sql then passed to ensure_schema has an areas table
+    command:
+    - python3
+    - /tmp/claude-0/-usr-share-pac-dev-py-mcpp-plan/1e40db66-e52e-4a9d-883f-480c1fc98df0/scratchpad/test_schema_stamp.py
+    criterion: ensure_schema on a baseline DB, fresh or stamped latest, yields contexts.area, areas and
+      release_candidates at the latest version
     runs: 1
-  trial: null
-  fix: null
+  trial:
+    file: .proofs/a-fresh-db-is-stamped-at-latest-and-skips-every-patch-from-8.trial.txt
+    exit: 1
+    runs: 1
+    failures: 1
+    at: '2026-11-03T10:25:54.473'
+    commit: db7cf94-dirty
+  fix:
+    file: .proofs/a-fresh-db-is-stamped-at-latest-and-skips-every-patch-from-8.fix.txt
+    exit: 0
+    runs: 1
+    failures: 0
+    at: '2026-11-03T10:26:16.942'
+    commit: db7cf94-dirty
 - id: area-stats-and-roadmap-disagree-on-what-an-open-dependency-is
   type: bug
   what: area_stats treats a dependency with zero tasks ever as still open, roadmap_all_data treats the
